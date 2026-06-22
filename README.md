@@ -33,7 +33,7 @@ Install dependencies and run:
 
 ```bash
 mise install
-mise run run
+mise run start
 ```
 
 Then open <http://localhost:8080>.

@@ -5,7 +5,7 @@
 This project uses [mise](https://mise.jdx.dev/) for tool and task management.
 Run `mise install` first to set up Go and development tools.
 
-- `mise run run` — run the server on port 8080.
+- `mise run start` — run the server on port 8080.
 - `mise run dev` — run `templ generate --watch` with the server for development.
 - `mise run generate` — regenerate sqlc and templ code.
 - `mise run build` — build binaries for local and linux/amd64.

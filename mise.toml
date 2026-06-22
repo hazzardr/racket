@@ -9,7 +9,7 @@ goreleaser = "2.6.1"
 [tasks]
 help = { run = "mise tasks", description = "print available tasks" }
 
-run = { run = "go run ./cmd/server", description = "run the project" }
+start = { run = "go run ./cmd/server", description = "run the project" }
 
 dev = { run = "templ generate --watch --cmd='go run ./cmd/server'", description = "run the project with template auto-reload" }
 

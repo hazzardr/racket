@@ -6,10 +6,10 @@ pre-commit:
   parallel: false
   jobs:
     - name: format
-      run: make fmt
+      run: mise run fmt
 
     - name: lint
-      run: make lint
+      run: mise run lint
 
     - name: test
-      run: make test
+      run: mise run test
