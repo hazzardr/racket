@@ -1,0 +1,15 @@
+output:
+  - success
+  - failure
+
+pre-commit:
+  parallel: false
+  jobs:
+    - name: format
+      run: make fmt
+
+    - name: lint
+      run: make lint
+
+    - name: test
+      run: make test

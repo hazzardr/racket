@@ -1,0 +1,98 @@
+package components
+
+import "racket/internal/db"
+
+templ MachinesIndex(machines []db.Machine) {
+	@Base("Machines") {
+		<div class="page-header">
+			<h1>Machines</h1>
+			<button class="btn" hx-get="/machines/new" hx-target="#machine-form" hx-swap="innerHTML">Add Machine</button>
+		</div>
+		<div id="machine-form"></div>
+		<div id="machines-list" class="card-grid">
+			@MachineList(machines)
+		</div>
+	}
+}
+
+templ MachineList(machines []db.Machine) {
+	for _, m := range machines {
+		@MachineCard(m)
+	}
+}
+
+templ MachineCard(m db.Machine) {
+	<article class="card" id={ "machine-" + itoa(m.ID) }>
+		<h2>{ m.Name }</h2>
+		<p class="muted">{ formatString(m.Description) }</p>
+		<dl class="stats">
+			<dt>Location</dt>
+			<dd>{ formatString(m.Location) }</dd>
+			<dt>Built On</dt>
+			<dd>{ formatDate(m.BuiltOn) }</dd>
+			<dt>Purchased On</dt>
+			<dd>{ formatDate(m.PurchasedOn) }</dd>
+		</dl>
+		<div class="actions">
+			<a class="btn" href={ templ.SafeURL("/machines/" + itoa(m.ID)) }>View</a>
+			<button class="btn" hx-get={ "/machines/" + itoa(m.ID) + "/edit" } hx-target="#machine-form" hx-swap="innerHTML">Edit</button>
+			<button class="btn btn-danger" hx-delete={ "/machines/" + itoa(m.ID) } hx-target={ "#machine-" + itoa(m.ID) } hx-swap="outerHTML" hx-confirm="Delete this machine?">Delete</button>
+		</div>
+	</article>
+}
+
+templ MachineForm(action string, machine db.Machine, isEdit bool) {
+	<form class="form-card" hx-post={ action } hx-target="#machines-list" hx-swap="innerHTML">
+		<h3>Machine</h3>
+		<label>
+			Name
+			<input type="text" name="name" value={ machine.Name } required/>
+		</label>
+		<label>
+			Description
+			<textarea name="description">{ formatString(machine.Description) }</textarea>
+		</label>
+		<label>
+			Location
+			<input type="text" name="location" value={ formatString(machine.Location) }/>
+		</label>
+		<label>
+			Built On
+			<input type="date" name="built_on" value={ formatDate(machine.BuiltOn) }/>
+		</label>
+		<label>
+			Purchased On
+			<input type="date" name="purchased_on" value={ formatDate(machine.PurchasedOn) }/>
+		</label>
+		if isEdit {
+			<input type="hidden" name="id" value={ itoa(machine.ID) }/>
+			<button class="btn" type="submit" hx-put={ action }>Update</button>
+		} else {
+			<button class="btn" type="submit">Add Machine</button>
+		}
+	</form>
+}
+
+templ MachineDetail(machine db.Machine, parts []db.Part) {
+	@Base(machine.Name) {
+		<div class="page-header">
+			<h1>{ machine.Name }</h1>
+			<a class="btn" href="/machines">Back</a>
+		</div>
+		<div class="card">
+			<p>{ formatString(machine.Description) }</p>
+			<dl class="stats">
+				<dt>Location</dt>
+				<dd>{ formatString(machine.Location) }</dd>
+				<dt>Built On</dt>
+				<dd>{ formatDate(machine.BuiltOn) }</dd>
+				<dt>Purchased On</dt>
+				<dd>{ formatDate(machine.PurchasedOn) }</dd>
+			</dl>
+		</div>
+		<h2>Parts</h2>
+		<div class="card-grid">
+			@PartList(parts)
+		</div>
+	}
+}

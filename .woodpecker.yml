@@ -1,0 +1,27 @@
+steps:
+  build:
+    image: docker.io/golang:1.26
+    commands:
+      - go mod download
+      - go build ./...
+      - go vet ./...
+      - go test ./...
+    when:
+      event: [push, pull_request, tag]
+
+  lint:
+    image: docker.io/golangci/golangci-lint:v2.12.2
+    commands:
+      - golangci-lint run
+    when:
+      event: [push, pull_request, tag]
+
+  release:
+    image: docker.io/goreleaser/goreleaser:v2.6.1
+    environment:
+      GITEA_TOKEN:
+        from_secret: gitea_token
+    commands:
+      - goreleaser release --clean
+    when:
+      event: tag

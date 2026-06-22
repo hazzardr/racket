@@ -1,0 +1,26 @@
+package components
+
+templ Base(title string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<title>{ title } | Racket</title>
+			<script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshVV/FhERA44hCG9T62aKKV57A5ovX+TZDsqq3zg8RW+76CU7x2rz3" crossorigin="anonymous"></script>
+			<link rel="stylesheet" href="/static/css/styles.css"/>
+		</head>
+		<body>
+			<nav class="navbar">
+				<a href="/" class="brand">Racket</a>
+				<ul class="nav-links">
+					<li><a href="/machines">Machines</a></li>
+					<li><a href="/parts">Parts</a></li>
+				</ul>
+			</nav>
+			<main class="container">
+				{ children... }
+			</main>
+		</body>
+	</html>
+}
