@@ -55,4 +55,5 @@ jobs:
           version: '~> v2'
           args: release --clean
         env:
+          GITHUB_TOKEN: ""
           GITEA_TOKEN: ${{ secrets.goreleaser_token }}
