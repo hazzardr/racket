@@ -18,6 +18,7 @@ before:
         - go generate ./...
 
 builds:
+    - main: ./cmd/server/
     - env:
           - CGO_ENABLED=0
       goos:
