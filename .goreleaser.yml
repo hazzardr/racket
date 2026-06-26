@@ -9,8 +9,8 @@
 version: 2
 
 gitea_urls:
-  api: https://codeberg.org/api/v1
-  download: https://codeberg.org
+  api: https://code.brihome.me/api/v1
+  download: https://code.brihome.me
 
 before:
   hooks:
@@ -47,7 +47,7 @@ changelog:
 
 release:
   gitea:
-    owner: shuggie
+    owner: brian
     name: racket
   footer: >-
 

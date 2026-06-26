@@ -47,6 +47,7 @@ See `mise run help` for the full task list.
 
 ## CI & Releases
 
-- CI runs on Codeberg's Woodpecker CI via `.woodpecker.yml`.
-- Releases are published to Codeberg (Forgejo/Gitea) using GoReleaser.
+- CI runs on the local Forgejo instance (`code.brihome.me`) via `.forgejo/workflows/`.
+- Releases are published to the local Forgejo instance using GoReleaser.
+- The git repository is push-mirrored to Codeberg for public visibility.
 - Container images for CI are pulled from Docker Hub instead of ghcr.
