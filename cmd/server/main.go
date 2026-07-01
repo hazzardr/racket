@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/pressly/goose/v3"
 
+	"racket"
 	"racket/internal/db"
 	"racket/internal/handlers"
 
@@ -65,33 +69,35 @@ func run() error {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	r.Route("/api", func(r chi.Router) {
+		r.Get("/dashboard", h.Dashboard)
 
-	r.Get("/", h.Home)
+		r.Route("/machines", func(r chi.Router) {
+			r.Get("/", h.ListMachines)
+			r.Post("/", h.CreateMachine)
+			r.Route("/{id}", func(r chi.Router) {
+				r.Get("/", h.GetMachine)
+				r.Put("/", h.UpdateMachine)
+				r.Delete("/", h.DeleteMachine)
+			})
+		})
 
-	r.Route("/machines", func(r chi.Router) {
-		r.Get("/", h.ListMachines)
-		r.Get("/new", h.NewMachineForm)
-		r.Post("/", h.CreateMachine)
-		r.Route("/{id}", func(r chi.Router) {
-			r.Get("/", h.GetMachine)
-			r.Get("/edit", h.EditMachineForm)
-			r.Put("/", h.UpdateMachine)
-			r.Delete("/", h.DeleteMachine)
+		r.Route("/parts", func(r chi.Router) {
+			r.Get("/", h.ListParts)
+			r.Post("/", h.CreatePart)
+			r.Route("/{id}", func(r chi.Router) {
+				r.Get("/", h.GetPart)
+				r.Put("/", h.UpdatePart)
+				r.Delete("/", h.DeletePart)
+			})
 		})
 	})
 
-	r.Route("/parts", func(r chi.Router) {
-		r.Get("/", h.ListParts)
-		r.Get("/new", h.NewPartForm)
-		r.Post("/", h.CreatePart)
-		r.Route("/{id}", func(r chi.Router) {
-			r.Get("/", h.GetPart)
-			r.Get("/edit", h.EditPartForm)
-			r.Put("/", h.UpdatePart)
-			r.Delete("/", h.DeletePart)
-		})
-	})
+	spa, err := newSPAHandler(racket.FrontendDist)
+	if err != nil {
+		return fmt.Errorf("create spa handler: %w", err)
+	}
+	r.Get("/*", spa.ServeHTTP)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -111,4 +117,58 @@ func run() error {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil
+}
+
+type spaHandler struct {
+	static fs.FS
+	index  []byte
+}
+
+func newSPAHandler(embedded embed.FS) (*spaHandler, error) {
+	dist, err := fs.Sub(embedded, "frontend/dist")
+	if err != nil {
+		return nil, fmt.Errorf("open frontend/dist: %w", err)
+	}
+
+	index, err := fs.ReadFile(dist, "index.html")
+	if err != nil {
+		return nil, fmt.Errorf("read index.html: %w", err)
+	}
+
+	return &spaHandler{static: dist, index: index}, nil
+}
+
+func (s *spaHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	if path == "/" {
+		s.serveIndex(w)
+		return
+	}
+
+	file, err := s.static.Open(path[1:])
+	if err != nil {
+		s.serveIndex(w)
+		return
+	}
+	defer file.Close()
+
+	stat, err := file.Stat()
+	if err != nil || stat.IsDir() {
+		s.serveIndex(w)
+		return
+	}
+
+	rs, ok := file.(io.ReadSeeker)
+	if !ok {
+		s.serveIndex(w)
+		return
+	}
+
+	http.ServeContent(w, r, path, stat.ModTime(), rs)
+}
+
+func (s *spaHandler) serveIndex(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(s.index)
 }

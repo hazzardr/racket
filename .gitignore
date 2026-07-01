@@ -34,3 +34,9 @@ go.work.sum
 
 # Database files
 racket.db
+
+# Frontend build output
+frontend/dist/
+
+# Local npm dependencies
+node_modules/

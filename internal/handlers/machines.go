@@ -5,126 +5,159 @@ import (
 	"errors"
 	"net/http"
 
-	"racket/internal/components"
 	"racket/internal/db"
 )
+
+type MachineInput struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	Location    *string `json:"location"`
+	BuiltOn     *string `json:"built_on"`
+	PurchasedOn *string `json:"purchased_on"`
+}
+
+func machineParamsFromInput(input MachineInput) db.CreateMachineParams {
+	params := db.CreateMachineParams{
+		Name: input.Name,
+	}
+	if input.Description != nil {
+		params.Description = optionalString(*input.Description)
+	}
+	if input.Location != nil {
+		params.Location = optionalString(*input.Location)
+	}
+	if input.BuiltOn != nil {
+		params.BuiltOn = parseDate(*input.BuiltOn)
+	}
+	if input.PurchasedOn != nil {
+		params.PurchasedOn = parseDate(*input.PurchasedOn)
+	}
+	return params
+}
+
+func updateMachineParamsFromInput(id int64, input MachineInput) db.UpdateMachineParams {
+	params := db.UpdateMachineParams{
+		ID:   id,
+		Name: input.Name,
+	}
+	if input.Description != nil {
+		params.Description = optionalString(*input.Description)
+	}
+	if input.Location != nil {
+		params.Location = optionalString(*input.Location)
+	}
+	if input.BuiltOn != nil {
+		params.BuiltOn = parseDate(*input.BuiltOn)
+	}
+	if input.PurchasedOn != nil {
+		params.PurchasedOn = parseDate(*input.PurchasedOn)
+	}
+	return params
+}
 
 func (h *Handler) ListMachines(w http.ResponseWriter, r *http.Request) {
 	machines, err := h.queries.ListMachines(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	render(r.Context(), w, components.MachinesIndex(machines))
-}
-
-func (h *Handler) NewMachineForm(w http.ResponseWriter, r *http.Request) {
-	render(r.Context(), w, components.MachineForm("/machines", db.Machine{}, false))
+	resp := make([]MachineResponse, len(machines))
+	for i, m := range machines {
+		resp[i] = newMachineResponse(m)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) CreateMachine(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	var input MachineInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	params := db.CreateMachineParams{
-		Name:        r.FormValue("name"),
-		Description: components.OptionalString(r.FormValue("description")),
-		Location:    components.OptionalString(r.FormValue("location")),
-		BuiltOn:     components.ParseDate(r.FormValue("built_on")),
-		PurchasedOn: components.ParseDate(r.FormValue("purchased_on")),
-	}
-	if _, err := h.queries.CreateMachine(r.Context(), params); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if input.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	machines, err := h.queries.ListMachines(r.Context())
+
+	machine, err := h.queries.CreateMachine(r.Context(), machineParamsFromInput(input))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	render(r.Context(), w, components.MachineList(machines))
+	writeJSON(w, http.StatusCreated, newMachineResponse(machine))
 }
 
 func (h *Handler) GetMachine(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
 	machine, err := h.queries.GetMachine(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "not found", http.StatusNotFound)
+			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	parts, err := h.queries.ListPartsByMachine(r.Context(), sql.NullInt64{Int64: id, Valid: true})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	render(r.Context(), w, components.MachineDetail(machine, parts))
+
+	resp := struct {
+		Machine MachineResponse `json:"machine"`
+		Parts   []PartResponse  `json:"parts"`
+	}{
+		Machine: newMachineResponse(machine),
+		Parts:   make([]PartResponse, len(parts)),
+	}
+	for i, p := range parts {
+		resp.Parts[i] = newPartResponse(p)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) EditMachineForm(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
-		return
-	}
-	machine, err := h.queries.GetMachine(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	render(r.Context(), w, components.MachineForm("/machines/"+components.StrconvID(id), machine, true))
-}
-
+//nolint:dupl // machine and part update handlers share the same CRUD shape
 func (h *Handler) UpdateMachine(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	var input MachineInput
+	if err := decodeJSON(r, &input); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	params := db.UpdateMachineParams{
-		ID:          id,
-		Name:        r.FormValue("name"),
-		Description: components.OptionalString(r.FormValue("description")),
-		Location:    components.OptionalString(r.FormValue("location")),
-		BuiltOn:     components.ParseDate(r.FormValue("built_on")),
-		PurchasedOn: components.ParseDate(r.FormValue("purchased_on")),
-	}
-	if _, err := h.queries.UpdateMachine(r.Context(), params); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if input.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	machines, err := h.queries.ListMachines(r.Context())
+
+	machine, err := h.queries.UpdateMachine(r.Context(), updateMachineParamsFromInput(id, input))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	render(r.Context(), w, components.MachineList(machines))
+	writeJSON(w, http.StatusOK, newMachineResponse(machine))
 }
 
 func (h *Handler) DeleteMachine(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
-		http.Error(w, "invalid id", http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
 	if err := h.queries.DeleteMachine(r.Context(), id); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

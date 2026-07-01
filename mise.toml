@@ -1,7 +1,8 @@
 [tools]
 go = "1.26.4"
+node = "22.14.0"
+pnpm = "10.8.0"
 "go:github.com/sqlc-dev/sqlc/cmd/sqlc" = "1.31.1"
-"go:github.com/a-h/templ/cmd/templ" = "0.3.1020"
 "go:github.com/pressly/goose/v3/cmd/goose" = "3.27.1"
 golangci-lint = "2.12.2"
 goreleaser = "2.6.1"
@@ -9,15 +10,19 @@ goreleaser = "2.6.1"
 [tasks]
 help = { run = "mise tasks", description = "print available tasks" }
 
-start = { run = "go run ./cmd/server", description = "run the project" }
+start = { run = "go run ./cmd/server", description = "run the project", depends = ["frontend/build"] }
 
-dev = { run = "templ generate --watch --cmd='go run ./cmd/server'", description = "run the project with template auto-reload" }
+dev = { run = '''
+mise run frontend/dev & FRONTEND_PID=$!
+trap "kill $FRONTEND_PID 2>/dev/null || true" EXIT
+go run ./cmd/server
+''', description = "run the project with frontend dev server and go server", depends = ["frontend/install"] }
 
 deps = { run = "mise install", description = "install development dependencies" }
 
-clean = { run = "rm -rf bin racket.db", description = "delete generated code, binaries, and dev database" }
+clean = { run = "rm -rf bin racket.db frontend/dist frontend/node_modules", description = "delete generated code, binaries, dev database, and frontend build artifacts" }
 
-build = { run = "go build -ldflags='-s' -o=./bin/racket ./cmd/server && GOOS=linux GOARCH=amd64 go build -ldflags='-s' -o=./bin/linux_amd64/racket ./cmd/server", description = "build local and linux/amd64 binaries" }
+build = { run = "go build -ldflags='-s' -o=./bin/racket ./cmd/server && GOOS=linux GOARCH=amd64 go build -ldflags='-s' -o=./bin/linux_amd64/racket ./cmd/server", description = "build local and linux/amd64 binaries", depends = ["frontend/build"] }
 
 lint = { run = "golangci-lint run", description = "run golangci-lint" }
 
@@ -25,7 +30,15 @@ test = { run = "go test -v ./...", description = "run tests" }
 
 fmt = { run = "go fmt ./...", description = "format the project" }
 
-generate = { run = "sqlc generate && templ generate", description = "regenerate sqlc and templ code" }
+generate = { run = "sqlc generate", description = "regenerate sqlc code" }
+
+"frontend/install" = { run = "pnpm install --frozen-lockfile", description = "install frontend dependencies", dir = "frontend", env = { CI = "true" } }
+
+"frontend/build" = { run = "pnpm run build", description = "build frontend for production", dir = "frontend", depends = ["frontend/install"] }
+
+"frontend/dev" = { run = "pnpm run dev", description = "run frontend dev server", dir = "frontend" }
+
+"frontend/check" = { run = "pnpm run check", description = "type-check the frontend", dir = "frontend" }
 
 "db/migration/status" = { run = "goose sqlite3 ./racket.db -dir migrations status", description = "get the status of the database migrations" }
 

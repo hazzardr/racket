@@ -3,15 +3,19 @@
 ## Build & Run
 
 This project uses [mise](https://mise.jdx.dev/) for tool and task management.
-Run `mise install` first to set up Go and development tools.
+Run `mise install` first to set up Go, Node, pnpm, and development tools.
 
-- `mise run start` — run the server on port 8080.
-- `mise run dev` — run `templ generate --watch` with the server for development.
-- `mise run generate` — regenerate sqlc and templ code.
-- `mise run build` — build binaries for local and linux/amd64.
+- `mise run start` — build the frontend and run the server on port 8080.
+- `mise run dev` — run the Vite dev server and Go server for development.
+- `mise run generate` — regenerate sqlc code.
+- `mise run build` — build the frontend and Go binaries for local and linux/amd64.
 - `mise run test` — run Go tests.
 - `mise run lint` — run golangci-lint.
 - `mise run fmt` — format the project.
+- `mise run frontend/install` — install frontend dependencies with pnpm.
+- `mise run frontend/build` — build the frontend for production.
+- `mise run frontend/dev` — run the Vite dev server.
+- `mise run frontend/check` — type-check the frontend with `vue-tsc`.
 - `mise run db/migrate` — run database migrations with goose.
 
 See `mise run help` for the full task list.
@@ -20,7 +24,11 @@ See `mise run help` for the full task list.
 
 - Go 1.26 with [chi](https://github.com/go-chi/chi) routing.
 - Structured logging via [charmbracelet/log](https://github.com/charmbracelet/log) as an `slog` handler.
-- Templ for HTML components; HTMX for interactivity.
+- Vue 3 with the Composition API and TypeScript for the SPA frontend.
+- [Vite](https://vitejs.dev/) for frontend builds; [pnpm](https://pnpm.io/) for package management.
+- The built frontend is embedded into the Go binary with `//go:embed`.
+- Go handlers expose a JSON API under `/api/*`.
+- The SPA is decoupled from the backend; the Go binary embeds the built frontend for deployment.
 - SQLite via `modernc.org/sqlite` (pure Go, no CGO).
 - sqlc for type-safe SQL queries.
 - goose for database migrations.
@@ -29,8 +37,6 @@ See `mise run help` for the full task list.
 
 - `sqlc.yaml` configures sqlc to read `migrations/` and
   `internal/db/queries.sql` and generate `internal/db/*.go`.
-- Templ files live in `internal/components/` and generate
-  `internal/components/*_templ.go`.
 - Do not edit generated files by hand.
 
 ## Database
@@ -41,9 +47,9 @@ See `mise run help` for the full task list.
 ## Conventions
 
 - Handlers live in `internal/handlers/` and operate on `*db.Queries`.
-- Components live in `internal/components/`.
-- Helper functions for parsing form values and formatting are in
-  `internal/components/helpers.go`.
+- Vue components, views, and API modules live in `frontend/src/`.
+- Helper functions for parsing request values are in
+  `internal/handlers/helpers.go`.
 
 ## CI & Releases
 
