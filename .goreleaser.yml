@@ -15,7 +15,7 @@ gitea_urls:
 before:
     hooks:
         - go mod tidy
-        - go generate ./...
+        - pnpm -C frontend install --frozen-lockfile && pnpm -C frontend run build
 
 builds:
     - main: ./cmd/server/

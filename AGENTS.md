@@ -7,18 +7,15 @@ Run `mise install` first to set up Go, Node, pnpm, and development tools.
 
 - `mise run start` — build the frontend and run the server on port 8080.
 - `mise run dev` — run the Vite dev server and Go server for development.
-- `mise run generate` — regenerate sqlc code.
-- `mise run build` — build the frontend and Go binaries for local and linux/amd64.
+- `mise run build` — build the frontend and local Go binary.
 - `mise run test` — run Go tests.
 - `mise run lint` — run golangci-lint.
 - `mise run fmt` — format the project.
-- `mise run frontend/install` — install frontend dependencies with pnpm.
-- `mise run frontend/build` — build the frontend for production.
-- `mise run frontend/dev` — run the Vite dev server.
-- `mise run frontend/check` — type-check the frontend with `vue-tsc`.
-- `mise run db/migrate` — run database migrations with goose.
 
-See `mise run help` for the full task list.
+Run `sqlc generate` directly to regenerate sqlc code. Migrations are applied
+on server startup; scaffold new ones with
+`goose sqlite3 ./racket.db -dir migrations create NAME sql`.
+See `mise tasks` for the full task list.
 
 ## Stack
 
