@@ -6,3 +6,11 @@ export interface Machine {
   built_on: string | null;
   purchased_on: string | null;
 }
+
+export interface MachineInput {
+  name: string;
+  description?: string;
+  location?: string;
+  built_on?: string;
+  purchased_on?: string;
+}
