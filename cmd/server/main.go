@@ -79,6 +79,7 @@ func run() error {
 				r.Get("/", h.GetMachine)
 				r.Put("/", h.UpdateMachine)
 				r.Delete("/", h.DeleteMachine)
+				r.Post("/slots", h.CreateSlot)
 			})
 		})
 
@@ -90,6 +91,10 @@ func run() error {
 				r.Put("/", h.UpdatePart)
 				r.Delete("/", h.DeletePart)
 			})
+		})
+
+		r.Route("/slots", func(r chi.Router) {
+			r.Delete("/{id}", h.DeleteSlot)
 		})
 	})
 

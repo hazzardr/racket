@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 import LandingView from "./views/LandingView.vue";
+import MachineDetailView from "./views/MachineDetailView.vue";
 import MachinesView from "./views/MachinesView.vue";
 import NewMachineView from "./views/NewMachineView.vue";
 
@@ -9,5 +10,6 @@ export const router = createRouter({
     { path: "/", component: LandingView },
     { path: "/machines", component: MachinesView },
     { path: "/machines/new", component: NewMachineView },
+    { path: "/machines/:id", component: MachineDetailView },
   ],
 });

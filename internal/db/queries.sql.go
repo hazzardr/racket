@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 const createMachine = `-- name: CreateMachine :one
@@ -49,10 +50,10 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 const createPart = `-- name: CreatePart :one
 INSERT INTO parts (
     machine_id, name, category, description, manufacturer, model, serial_number,
-    warranty_expires, purchased_on, purchased_from, purchase_price, guide_url
+    warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, slot_id
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at, slot_id
 `
 
 type CreatePartParams struct {
@@ -68,6 +69,7 @@ type CreatePartParams struct {
 	PurchasedFrom   sql.NullString
 	PurchasePrice   sql.NullFloat64
 	GuideUrl        sql.NullString
+	SlotID          sql.NullInt64
 }
 
 func (q *Queries) CreatePart(ctx context.Context, arg CreatePartParams) (Part, error) {
@@ -84,6 +86,7 @@ func (q *Queries) CreatePart(ctx context.Context, arg CreatePartParams) (Part, e
 		arg.PurchasedFrom,
 		arg.PurchasePrice,
 		arg.GuideUrl,
+		arg.SlotID,
 	)
 	var i Part
 	err := row.Scan(
@@ -102,6 +105,28 @@ func (q *Queries) CreatePart(ctx context.Context, arg CreatePartParams) (Part, e
 		&i.GuideUrl,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SlotID,
+	)
+	return i, err
+}
+
+const createSlot = `-- name: CreateSlot :one
+INSERT INTO machine_slots (machine_id, category) VALUES (?, ?) RETURNING id, machine_id, category, created_at
+`
+
+type CreateSlotParams struct {
+	MachineID int64
+	Category  string
+}
+
+func (q *Queries) CreateSlot(ctx context.Context, arg CreateSlotParams) (MachineSlot, error) {
+	row := q.db.QueryRowContext(ctx, createSlot, arg.MachineID, arg.Category)
+	var i MachineSlot
+	err := row.Scan(
+		&i.ID,
+		&i.MachineID,
+		&i.Category,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -123,6 +148,15 @@ WHERE id = ?
 
 func (q *Queries) DeletePart(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deletePart, id)
+	return err
+}
+
+const deleteSlot = `-- name: DeleteSlot :exec
+DELETE FROM machine_slots WHERE id = ?
+`
+
+func (q *Queries) DeleteSlot(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteSlot, id)
 	return err
 }
 
@@ -148,7 +182,7 @@ func (q *Queries) GetMachine(ctx context.Context, id int64) (Machine, error) {
 }
 
 const getPart = `-- name: GetPart :one
-SELECT id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at FROM parts
+SELECT id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at, slot_id FROM parts
 WHERE id = ?
 `
 
@@ -171,6 +205,23 @@ func (q *Queries) GetPart(ctx context.Context, id int64) (Part, error) {
 		&i.GuideUrl,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SlotID,
+	)
+	return i, err
+}
+
+const getSlot = `-- name: GetSlot :one
+SELECT id, machine_id, category, created_at FROM machine_slots WHERE id = ?
+`
+
+func (q *Queries) GetSlot(ctx context.Context, id int64) (MachineSlot, error) {
+	row := q.db.QueryRowContext(ctx, getSlot, id)
+	var i MachineSlot
+	err := row.Scan(
+		&i.ID,
+		&i.MachineID,
+		&i.Category,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -213,7 +264,7 @@ func (q *Queries) ListMachines(ctx context.Context) ([]Machine, error) {
 }
 
 const listParts = `-- name: ListParts :many
-SELECT id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at FROM parts
+SELECT id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at, slot_id FROM parts
 ORDER BY created_at DESC
 `
 
@@ -242,6 +293,7 @@ func (q *Queries) ListParts(ctx context.Context) ([]Part, error) {
 			&i.GuideUrl,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SlotID,
 		); err != nil {
 			return nil, err
 		}
@@ -257,7 +309,7 @@ func (q *Queries) ListParts(ctx context.Context) ([]Part, error) {
 }
 
 const listPartsByMachine = `-- name: ListPartsByMachine :many
-SELECT id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at FROM parts
+SELECT id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at, slot_id FROM parts
 WHERE machine_id = ?
 ORDER BY created_at DESC
 `
@@ -287,6 +339,7 @@ func (q *Queries) ListPartsByMachine(ctx context.Context, machineID sql.NullInt6
 			&i.GuideUrl,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SlotID,
 		); err != nil {
 			return nil, err
 		}
@@ -299,6 +352,64 @@ func (q *Queries) ListPartsByMachine(ctx context.Context, machineID sql.NullInt6
 		return nil, err
 	}
 	return items, nil
+}
+
+const listSlotsByMachine = `-- name: ListSlotsByMachine :many
+SELECT machine_slots.id, machine_slots.machine_id, machine_slots.category, machine_slots.created_at, parts.id AS part_id, parts.name AS part_name, parts.model AS part_model
+FROM machine_slots
+LEFT JOIN parts ON parts.slot_id = machine_slots.id
+WHERE machine_slots.machine_id = ?
+ORDER BY machine_slots.id
+`
+
+type ListSlotsByMachineRow struct {
+	ID        int64
+	MachineID int64
+	Category  string
+	CreatedAt time.Time
+	PartID    sql.NullInt64
+	PartName  sql.NullString
+	PartModel sql.NullString
+}
+
+func (q *Queries) ListSlotsByMachine(ctx context.Context, machineID int64) ([]ListSlotsByMachineRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSlotsByMachine, machineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSlotsByMachineRow
+	for rows.Next() {
+		var i ListSlotsByMachineRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.MachineID,
+			&i.Category,
+			&i.CreatedAt,
+			&i.PartID,
+			&i.PartName,
+			&i.PartModel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unassignPartsBySlot = `-- name: UnassignPartsBySlot :exec
+UPDATE parts SET slot_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE slot_id = ?
+`
+
+func (q *Queries) UnassignPartsBySlot(ctx context.Context, slotID sql.NullInt64) error {
+	_, err := q.db.ExecContext(ctx, unassignPartsBySlot, slotID)
+	return err
 }
 
 const updateMachine = `-- name: UpdateMachine :one
@@ -344,9 +455,9 @@ const updatePart = `-- name: UpdatePart :one
 UPDATE parts
 SET machine_id = ?, name = ?, category = ?, description = ?, manufacturer = ?, model = ?,
     serial_number = ?, warranty_expires = ?, purchased_on = ?, purchased_from = ?,
-    purchase_price = ?, guide_url = ?, updated_at = CURRENT_TIMESTAMP
+    purchase_price = ?, guide_url = ?, slot_id = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at
+RETURNING id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at, slot_id
 `
 
 type UpdatePartParams struct {
@@ -362,6 +473,7 @@ type UpdatePartParams struct {
 	PurchasedFrom   sql.NullString
 	PurchasePrice   sql.NullFloat64
 	GuideUrl        sql.NullString
+	SlotID          sql.NullInt64
 	ID              int64
 }
 
@@ -379,6 +491,7 @@ func (q *Queries) UpdatePart(ctx context.Context, arg UpdatePartParams) (Part, e
 		arg.PurchasedFrom,
 		arg.PurchasePrice,
 		arg.GuideUrl,
+		arg.SlotID,
 		arg.ID,
 	)
 	var i Part
@@ -398,6 +511,7 @@ func (q *Queries) UpdatePart(ctx context.Context, arg UpdatePartParams) (Part, e
 		&i.GuideUrl,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SlotID,
 	)
 	return i, err
 }

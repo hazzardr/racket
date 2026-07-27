@@ -3,10 +3,13 @@ package handlers
 import (
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"racket/internal/db"
 )
+
+var defaultSlots = []string{"Motherboard", "CPU", "RAM", "RAM", "Storage", "Storage", "GPU", "PSU", "Case"}
 
 type MachineInput struct {
 	Name        string  `json:"name"`
@@ -84,6 +87,12 @@ func (h *Handler) CreateMachine(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	for _, cat := range defaultSlots {
+		_, err := h.queries.CreateSlot(r.Context(), db.CreateSlotParams{MachineID: machine.ID, Category: cat})
+		if err != nil {
+			slog.WarnContext(r.Context(), "failed to seed slot", "machine", machine.ID, "category", cat, "error", err)
+		}
+	}
 	writeJSON(w, http.StatusCreated, newMachineResponse(machine))
 }
 
@@ -108,20 +117,30 @@ func (h *Handler) GetMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slots, err := h.queries.ListSlotsByMachine(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	resp := struct {
 		Machine MachineResponse `json:"machine"`
 		Parts   []PartResponse  `json:"parts"`
+		Slots   []SlotResponse  `json:"slots"`
 	}{
 		Machine: newMachineResponse(machine),
 		Parts:   make([]PartResponse, len(parts)),
+		Slots:   make([]SlotResponse, len(slots)),
 	}
 	for i, p := range parts {
 		resp.Parts[i] = newPartResponse(p)
 	}
+	for i, s := range slots {
+		resp.Slots[i] = newSlotResponse(s)
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-//nolint:dupl // machine and part update handlers share the same CRUD shape
 func (h *Handler) UpdateMachine(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {

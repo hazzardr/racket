@@ -1,4 +1,4 @@
-import type { Machine, MachineInput } from "~/types";
+import type { Machine, MachineDetail, MachineInput } from "~/types";
 
 const API_BASE = "/api";
 
@@ -6,6 +6,14 @@ export async function listMachines(): Promise<Machine[]> {
   const response = await fetch(`${API_BASE}/machines`);
   if (!response.ok) {
     throw new Error(`Failed to fetch machines: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function getMachine(id: number): Promise<MachineDetail> {
+  const response = await fetch(`${API_BASE}/machines/${id}`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch machine: ${response.statusText}`);
   }
   return response.json();
 }

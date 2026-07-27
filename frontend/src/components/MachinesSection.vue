@@ -31,9 +31,11 @@ onMounted(async () => {
     </div>
     <div v-else class="machine-grid">
       <article v-for="machine in machines" :key="machine.id" class="card">
-        <h2>{{ machine.name }}</h2>
-        <p v-if="machine.description">{{ machine.description }}</p>
-        <p v-if="machine.location" class="location">{{ machine.location }}</p>
+        <RouterLink :to="`/machines/${machine.id}`" class="card-link">
+          <h2>{{ machine.name }}</h2>
+          <p v-if="machine.description">{{ machine.description }}</p>
+          <p v-if="machine.location" class="location">{{ machine.location }}</p>
+        </RouterLink>
       </article>
     </div>
   </section>
@@ -73,6 +75,12 @@ onMounted(async () => {
   border: 1px solid var(--color-border);
   border-radius: 0.5rem;
   padding: 1.5rem;
+}
+
+.card-link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
 }
 
 .card h2 {

@@ -20,6 +20,13 @@ type Machine struct {
 	UpdatedAt   time.Time
 }
 
+type MachineSlot struct {
+	ID        int64
+	MachineID int64
+	Category  string
+	CreatedAt time.Time
+}
+
 type Part struct {
 	ID              int64
 	MachineID       sql.NullInt64
@@ -36,4 +43,5 @@ type Part struct {
 	GuideUrl        sql.NullString
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	SlotID          sql.NullInt64
 }

@@ -51,6 +51,7 @@ func newMachineResponse(m db.Machine) MachineResponse {
 type PartResponse struct {
 	ID              int64           `json:"id"`
 	MachineID       *int64          `json:"machine_id"`
+	SlotID          *int64          `json:"slot_id"`
 	Machine         *MachineSummary `json:"machine"`
 	Name            string          `json:"name"`
 	Category        *string         `json:"category"`
@@ -81,6 +82,9 @@ func newPartResponse(p db.Part) PartResponse {
 	}
 	if p.MachineID.Valid {
 		r.MachineID = &p.MachineID.Int64
+	}
+	if p.SlotID.Valid {
+		r.SlotID = &p.SlotID.Int64
 	}
 	if p.Category.Valid {
 		r.Category = &p.Category.String
@@ -115,6 +119,35 @@ func newPartResponse(p db.Part) PartResponse {
 		r.GuideURL = &p.GuideUrl.String
 	}
 	return r
+}
+
+type SlotResponse struct {
+	ID       int64             `json:"id"`
+	Category string            `json:"category"`
+	Part     *SlotPartResponse `json:"part"`
+}
+
+type SlotPartResponse struct {
+	ID    int64  `json:"id"`
+	Name  string `json:"name"`
+	Model string `json:"model"`
+}
+
+func newSlotResponse(s db.ListSlotsByMachineRow) SlotResponse {
+	resp := SlotResponse{
+		ID:       s.ID,
+		Category: s.Category,
+	}
+	if s.PartID.Valid {
+		resp.Part = &SlotPartResponse{
+			ID:   s.PartID.Int64,
+			Name: s.PartName.String,
+		}
+		if s.PartModel.Valid {
+			resp.Part.Model = s.PartModel.String
+		}
+	}
+	return resp
 }
 
 type DashboardResponse struct {

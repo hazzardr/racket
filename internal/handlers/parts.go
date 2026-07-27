@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strings"
 
 	"racket/internal/db"
 )
@@ -21,6 +22,7 @@ type PartInput struct {
 	PurchasedFrom   *string  `json:"purchased_from"`
 	PurchasePrice   *float64 `json:"purchase_price"`
 	GuideURL        *string  `json:"guide_url"`
+	SlotID          *int64   `json:"slot_id"`
 }
 
 func partParamsFromInput(input PartInput) db.CreatePartParams {
@@ -29,6 +31,9 @@ func partParamsFromInput(input PartInput) db.CreatePartParams {
 	}
 	if input.MachineID != nil {
 		params.MachineID = sql.NullInt64{Int64: *input.MachineID, Valid: true}
+	}
+	if input.SlotID != nil {
+		params.SlotID = sql.NullInt64{Int64: *input.SlotID, Valid: true}
 	}
 	if input.Category != nil {
 		params.Category = optionalString(*input.Category)
@@ -70,6 +75,9 @@ func updatePartParamsFromInput(id int64, input PartInput) db.UpdatePartParams {
 	}
 	if input.MachineID != nil {
 		params.MachineID = sql.NullInt64{Int64: *input.MachineID, Valid: true}
+	}
+	if input.SlotID != nil {
+		params.SlotID = sql.NullInt64{Int64: *input.SlotID, Valid: true}
 	}
 	if input.Category != nil {
 		params.Category = optionalString(*input.Category)
@@ -128,8 +136,25 @@ func (h *Handler) CreatePart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if input.SlotID != nil {
+		slot, err := h.queries.GetSlot(r.Context(), *input.SlotID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusBadRequest, "slot not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		input.MachineID = &slot.MachineID
+	}
+
 	part, err := h.queries.CreatePart(r.Context(), partParamsFromInput(input))
 	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") {
+			writeError(w, http.StatusBadRequest, "slot already filled")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -169,7 +194,6 @@ func (h *Handler) GetPart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-//nolint:dupl // machine and part update handlers share the same CRUD shape
 func (h *Handler) UpdatePart(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")
 	if err != nil {
@@ -186,10 +210,27 @@ func (h *Handler) UpdatePart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if input.SlotID != nil {
+		slot, err := h.queries.GetSlot(r.Context(), *input.SlotID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusBadRequest, "slot not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		input.MachineID = &slot.MachineID
+	}
+
 	part, err := h.queries.UpdatePart(r.Context(), updatePartParamsFromInput(id, input))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if strings.Contains(err.Error(), "UNIQUE") {
+			writeError(w, http.StatusBadRequest, "slot already filled")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
