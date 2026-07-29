@@ -5,10 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -20,12 +20,6 @@ import (
 	"racket/internal/db"
 )
 
-// ImportResponse is returned by all import endpoints.
-type ImportResponse struct {
-	Imported int            `json:"imported"`
-	Parts    []PartResponse `json:"parts"`
-}
-
 var (
 	priceRe = regexp.MustCompile(`[^\d.]`)
 
@@ -35,12 +29,135 @@ var (
 
 // importPage is the import form state (also used for failure re-renders).
 type importPage struct {
-	Error string
+	Error       string
+	MachineName string
+	URL         string
 }
 
 // ImportPage renders GET /import.
 func (h *Handler) ImportPage(w http.ResponseWriter, _ *http.Request) {
 	h.web.Render(w, http.StatusOK, "import.html", importPage{})
+}
+
+// Import handles POST /import.
+// Accepts multipart/form-data or application/x-www-form-urlencoded with fields:
+//   - machine_name (optional) — create a new machine for the imported parts
+//   - pcpartpicker_url (optional) — PCPartPicker list/build URL
+//   - file (optional) — CSV file upload
+//
+// Exactly one of pcpartpicker_url or file is required.
+// All operations run in a single transaction.
+func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
+	// Limit body to 10MB.
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		// Fall back to urlencoded.
+		if err := r.ParseForm(); err != nil {
+			h.renderError(w, r, http.StatusBadRequest, "failed to parse form")
+			return
+		}
+	}
+
+	url := strings.TrimSpace(r.FormValue("pcpartpicker_url"))
+	machineName := strings.TrimSpace(r.FormValue("machine_name"))
+	file, _, fileErr := r.FormFile("file")
+
+	if url == "" && fileErr != nil {
+		h.web.Render(w, http.StatusUnprocessableEntity, "import.html", importPage{
+			Error: "Provide a PCPartPicker URL or a CSV file.",
+		})
+		return
+	}
+	if fileErr == nil {
+		defer file.Close()
+	}
+
+	base := importPage{MachineName: machineName, URL: url}
+
+	ctx := r.Context()
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	txQ := h.queries.WithTx(tx)
+	var machineID int64
+
+	if machineName != "" {
+		machine, err := txQ.CreateMachine(ctx, db.CreateMachineParams{Name: machineName})
+		if err != nil {
+			h.web.Render(w, http.StatusUnprocessableEntity, "import.html", importPage{Error: err.Error(), MachineName: base.MachineName, URL: base.URL})
+			return
+		}
+		machineID = machine.ID
+		// Seed default slots.
+		for _, cat := range defaultSlots {
+			if _, err := txQ.CreateSlot(ctx, db.CreateSlotParams{MachineID: machine.ID, Category: cat}); err != nil {
+				slog.WarnContext(ctx, "failed to seed slot", "machine", machine.ID, "category", cat, "error", err)
+			}
+		}
+	}
+
+	var rows []csvRow
+	if url != "" {
+		matches := pcppListRe.FindStringSubmatch(url)
+		if matches == nil {
+			h.web.Render(w, http.StatusUnprocessableEntity, "import.html", importPage{Error: "Not a valid PCPartPicker list URL.", MachineName: base.MachineName, URL: base.URL})
+			return
+		}
+		pathType, listID := matches[1], matches[2]
+
+		// Try CSV export first.
+		exportURL := "https://pcpartpicker.com/" + pathType + "/" + listID + "/export"
+		exportData, exportStatus, err := fetchPCPP(ctx, exportURL)
+		if err != nil {
+			h.web.Render(w, http.StatusUnprocessableEntity, "import.html", importPage{Error: "Failed to fetch PCPartPicker: " + err.Error(), MachineName: base.MachineName, URL: base.URL})
+			return
+		}
+		if exportStatus == http.StatusOK {
+			rows, err = parseCSVToRows(csv.NewReader(bytes.NewReader(exportData)))
+		} else {
+			rows, err = fetchAndParseHTML(ctx, url)
+		}
+		if err != nil {
+			h.web.Render(w, http.StatusUnprocessableEntity, "import.html", importPage{Error: err.Error(), MachineName: base.MachineName, URL: base.URL})
+			return
+		}
+	} else {
+		var err error
+		rows, err = parseCSVToRows(csv.NewReader(file))
+		if err != nil {
+			h.web.Render(w, http.StatusUnprocessableEntity, "import.html", importPage{Error: err.Error(), MachineName: base.MachineName, URL: base.URL})
+			return
+		}
+	}
+
+	// Create parts from rows.
+	for _, row := range rows {
+		params := rowToCreateParams(row, sql.NullInt64{Int64: machineID, Valid: machineID != 0})
+		if _, err := txQ.CreatePart(ctx, params); err != nil {
+			h.web.Render(w, http.StatusUnprocessableEntity, "import.html", importPage{Error: fmt.Sprintf("create part %q: %v", row.name, err), MachineName: base.MachineName, URL: base.URL})
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	redirectURL := fmt.Sprintf("/machines/%d", machineID)
+	if machineID == 0 {
+		redirectURL = "/machines"
+	}
+	if r.Header.Get("Hx-Request") == "" {
+		http.Redirect(w, r, redirectURL, http.StatusSeeOther)
+	} else {
+		w.Header().Set("Hx-Redirect", redirectURL)
+	}
 }
 
 // parsePrice strips currency symbols and commas, then parses a float.
@@ -286,187 +403,6 @@ func rowToCreateParams(r csvRow, machineID sql.NullInt64) db.CreatePartParams {
 	return p
 }
 
-// parseMachineID parses an optional machine_id query parameter.
-// Returns a valid NullInt64 if provided and the machine exists, zero value otherwise.
-func (h *Handler) parseMachineID(r *http.Request) (sql.NullInt64, error) {
-	idStr := r.URL.Query().Get("machine_id")
-	if idStr == "" {
-		return sql.NullInt64{}, nil
-	}
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		return sql.NullInt64{}, fmt.Errorf("invalid machine_id: %s", idStr)
-	}
-	_, err = h.queries.GetMachine(r.Context(), id)
-	if err != nil {
-		return sql.NullInt64{}, fmt.Errorf("machine %d not found", id)
-	}
-	return sql.NullInt64{Int64: id, Valid: true}, nil
-}
-
-// ImportCSV handles POST /api/parts/import-csv.
-// Expects multipart form with a file field.
-func (h *Handler) ImportCSV(w http.ResponseWriter, r *http.Request) {
-	//nolint:gosec // bounded to 10MB
-	if err := r.ParseMultipartForm(10 << 20); err != nil {
-		writeError(w, http.StatusBadRequest, "failed to parse form")
-		return
-	}
-
-	machineID, err := h.parseMachineID(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "missing file field")
-		return
-	}
-	defer file.Close()
-
-	rows, err := parseCSVToRows(csv.NewReader(file))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	parts, err := createPartsFromRows(r.Context(), h.queries, rows, machineID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, ImportResponse{
-		Imported: len(parts),
-		Parts:    parts,
-	})
-}
-
-// ImportJSON handles POST /api/parts/import-json.
-// Accepts multipart form with a JSON file, or raw JSON body.
-func (h *Handler) ImportJSON(w http.ResponseWriter, r *http.Request) {
-	machineID, err := h.parseMachineID(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	items, err := readJSONImportItems(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	parts, err := createPartsFromJSONItems(r.Context(), h.queries, items, machineID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, ImportResponse{
-		Imported: len(parts),
-		Parts:    parts,
-	})
-}
-
-// readJSONImportItems reads import items from a multipart file or raw JSON body.
-func readJSONImportItems(r *http.Request) ([]jsonPartItem, error) {
-	var items []jsonPartItem
-
-	ct := r.Header.Get("Content-Type")
-	if strings.HasPrefix(ct, "multipart/form-data") {
-		//nolint:gosec // bounded to 10MB
-		if err := r.ParseMultipartForm(10 << 20); err != nil {
-			return nil, errors.New("failed to parse form")
-		}
-		file, _, err := r.FormFile("file")
-		if err != nil {
-			return nil, errors.New("missing file field")
-		}
-		defer file.Close()
-
-		if err := json.NewDecoder(file).Decode(&items); err != nil {
-			return nil, fmt.Errorf("invalid JSON in file: %w", err)
-		}
-		return items, nil
-	}
-
-	if err := decodeJSON(r, &items); err != nil {
-		return nil, fmt.Errorf("invalid JSON: %w", err)
-	}
-	return items, nil
-}
-
-// jsonPartItem represents one item in the JSON import array.
-type jsonPartItem struct {
-	Name          string   `json:"name"`
-	Category      string   `json:"category"`
-	Manufacturer  string   `json:"manufacturer"`
-	Model         string   `json:"model"`
-	PurchasePrice *float64 `json:"purchase_price"`
-	PurchasedFrom string   `json:"purchased_from"`
-	GuideURL      string   `json:"guide_url"`
-}
-
-func itemToCreateParams(item jsonPartItem, machineID sql.NullInt64) db.CreatePartParams {
-	p := db.CreatePartParams{
-		Name:      strings.TrimSpace(item.Name),
-		MachineID: machineID,
-	}
-	if item.Category != "" {
-		p.Category = sql.NullString{String: item.Category, Valid: true}
-	}
-	if item.Manufacturer != "" {
-		p.Manufacturer = sql.NullString{String: item.Manufacturer, Valid: true}
-	}
-	if item.Model != "" {
-		p.Model = sql.NullString{String: item.Model, Valid: true}
-	}
-	if item.PurchasePrice != nil {
-		p.PurchasePrice = sql.NullFloat64{Float64: *item.PurchasePrice, Valid: true}
-	}
-	if item.PurchasedFrom != "" {
-		p.PurchasedFrom = sql.NullString{String: item.PurchasedFrom, Valid: true}
-	}
-	if item.GuideURL != "" {
-		p.GuideUrl = sql.NullString{String: item.GuideURL, Valid: true}
-	}
-	return p
-}
-
-func createPartsFromRows(ctx context.Context, q *db.Queries, rows []csvRow,
-	machineID sql.NullInt64,
-) ([]PartResponse, error) {
-	var parts []PartResponse
-	for _, row := range rows {
-		part, err := q.CreatePart(ctx, rowToCreateParams(row, machineID))
-		if err != nil {
-			return nil, fmt.Errorf("create part %q: %w", row.name, err)
-		}
-		parts = append(parts, newPartResponse(part))
-	}
-	return parts, nil
-}
-
-func createPartsFromJSONItems(ctx context.Context, q *db.Queries, items []jsonPartItem,
-	machineID sql.NullInt64,
-) ([]PartResponse, error) {
-	var parts []PartResponse
-	for _, item := range items {
-		if strings.TrimSpace(item.Name) == "" {
-			continue
-		}
-		part, err := q.CreatePart(ctx, itemToCreateParams(item, machineID))
-		if err != nil {
-			return nil, fmt.Errorf("create part %q: %w", item.Name, err)
-		}
-		parts = append(parts, newPartResponse(part))
-	}
-	return parts, nil
-}
-
 // pcppListRe matches pcpartpicker.com list and build URLs (/list/ and /b/).
 // Group 1 = path type ("list" or "b"), group 2 = list/build ID.
 var pcppListRe = regexp.MustCompile(`^https?://(?:www\.)?pcpartpicker\.com/(list|b)/([a-zA-Z0-9_-]+)`)
@@ -505,71 +441,4 @@ func fetchAndParseHTML(ctx context.Context, url string) ([]csvRow, error) {
 		return nil, fmt.Errorf("parse parts list: %w", err)
 	}
 	return rows, nil
-}
-
-// ImportURL handles POST /api/parts/import-url.
-// Expects JSON body: { "url": "https://pcpartpicker.com/list/XXXXXX" }.
-func (h *Handler) ImportURL(w http.ResponseWriter, r *http.Request) {
-	machineID, err := h.parseMachineID(r)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	var body struct {
-		URL string `json:"url"`
-	}
-	if err := decodeJSON(r, &body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return
-	}
-
-	url := strings.TrimSpace(body.URL)
-	if url == "" {
-		writeError(w, http.StatusBadRequest, "url is required")
-		return
-	}
-
-	matches := pcppListRe.FindStringSubmatch(url)
-	if matches == nil {
-		writeError(w, http.StatusBadRequest, "not a valid PCPartPicker list URL")
-		return
-	}
-	pathType := matches[1]
-	listID := matches[2]
-
-	// Try the CSV export first.
-	exportURL := "https://pcpartpicker.com/" + pathType + "/" + listID + "/export"
-	exportData, exportStatus, err := fetchPCPP(r.Context(), exportURL)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to fetch PCPartPicker: "+err.Error())
-		return
-	}
-
-	var rows []csvRow
-	if exportStatus == http.StatusOK {
-		rows, err = parseCSVToRows(csv.NewReader(bytes.NewReader(exportData)))
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "failed to parse CSV: "+err.Error())
-			return
-		}
-	} else {
-		// CSV export unavailable (e.g. build guides) — parse the page HTML.
-		rows, err = fetchAndParseHTML(r.Context(), url)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-
-	parts, err := createPartsFromRows(r.Context(), h.queries, rows, machineID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, ImportResponse{
-		Imported: len(parts),
-		Parts:    parts,
-	})
 }

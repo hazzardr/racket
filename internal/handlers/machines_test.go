@@ -49,7 +49,7 @@ func newTestRouter(t *testing.T) (*chi.Mux, *sql.DB) {
 	t.Helper()
 	sqlDB := newTestDB(t)
 	queries := db.New(sqlDB)
-	h := New(queries, newTestWeb(t))
+	h := New(sqlDB, queries, newTestWeb(t))
 
 	r := chi.NewRouter()
 	r.Post("/machines", h.CreateMachine)

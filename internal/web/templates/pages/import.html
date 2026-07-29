@@ -15,11 +15,11 @@
       <form class="form" method="post" action="/import">
         <label>
           List URL
-          <input name="pcpartpicker_url" type="url" placeholder="https://pcpartpicker.com/list/XXXXXX" required>
+          <input name="pcpartpicker_url" type="url" placeholder="https://pcpartpicker.com/list/XXXXXX" value="{{.URL}}" required>
         </label>
         <label>
           Machine name (optional)
-          <input name="machine_name" type="text">
+          <input name="machine_name" type="text" value="{{.MachineName}}">
         </label>
         <div class="form-actions">
           <button type="submit" class="btn">Import from URL</button>
@@ -35,7 +35,7 @@
         </label>
         <label>
           Machine name (optional)
-          <input name="machine_name" type="text">
+          <input name="machine_name" type="text" value="{{.MachineName}}">
         </label>
         <div class="form-actions">
           <button type="submit" class="btn">Import CSV</button>

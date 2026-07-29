@@ -5,13 +5,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -34,12 +32,10 @@ func newImportTestRouter(t *testing.T) (*chi.Mux, *sql.DB) {
 		t.Fatal(err)
 	}
 	queries := db.New(sqlDB)
-	h := New(queries, newTestWeb(t))
+	h := New(sqlDB, queries, newTestWeb(t))
 
 	r := chi.NewRouter()
-	r.Post("/import-csv", h.ImportCSV)
-	r.Post("/import-json", h.ImportJSON)
-	r.Post("/import-url", h.ImportURL)
+	r.Post("/import", h.Import)
 	return r, sqlDB
 }
 
@@ -189,70 +185,32 @@ GPU,RTX 3080,$599.99,Newegg
 	mw.writeField("file", "parts.csv", []byte(csvData))
 	mw.close()
 
-	req := httptest.NewRequest(http.MethodPost, "/import-csv", &buf)
+	req := httptest.NewRequest(http.MethodPost, "/import", &buf)
 	req.Header.Set("Content-Type", "multipart/form-data; boundary=form-boundary")
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body: %s", rr.Code, rr.Body.String())
+	// Redirect to /machines (no machine created).
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d body: %s", rr.Code, rr.Body.String())
+	}
+	location := rr.Header().Get("Location")
+	if location != "/machines" {
+		t.Errorf("Location = %q, want %q", location, "/machines")
 	}
 
-	var resp ImportResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.Imported != 2 {
-		t.Fatalf("expected 2 imported, got %d", resp.Imported)
-	}
-}
-
-func TestImportCSV_WithMachineID(t *testing.T) {
-	r, sqlDB := newImportTestRouter(t)
-	defer sqlDB.Close()
-
+	// Verify parts were created.
 	queries := db.New(sqlDB)
-	machine, err := queries.CreateMachine(context.Background(), db.CreateMachineParams{Name: "Test Machine"})
+	parts, err := queries.ListParts(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	csvData := `Type,Item,Price,Merchant
-CPU,Ryzen 7 5800X,$329.99,Amazon
-`
-	var buf bytes.Buffer
-	mw := newMPWriter(&buf, "form-boundary")
-	mw.writeField("file", "parts.csv", []byte(csvData))
-	mw.close()
-
-	req := httptest.NewRequest(http.MethodPost, "/import-csv?machine_id=1", &buf)
-	req.Header.Set("Content-Type", "multipart/form-data; boundary=form-boundary")
-	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body: %s", rr.Code, rr.Body.String())
-	}
-
-	var resp ImportResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.Imported != 1 {
-		t.Fatalf("expected 1 imported, got %d", resp.Imported)
-	}
-	// Verify the part was associated with the machine.
-	part := resp.Parts[0]
-	got, err := queries.GetPart(context.Background(), part.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !got.MachineID.Valid || got.MachineID.Int64 != machine.ID {
-		t.Errorf("part machine_id = %+v, want Valid=true Int64=%d", got.MachineID, machine.ID)
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(parts))
 	}
 }
 
-func TestImportCSV_InvalidMachineID(t *testing.T) {
+func TestImportCSV_WithMachineName(t *testing.T) {
 	r, sqlDB := newImportTestRouter(t)
 	defer sqlDB.Close()
 
@@ -262,95 +220,76 @@ CPU,Ryzen 7 5800X,$329.99,Amazon
 	var buf bytes.Buffer
 	mw := newMPWriter(&buf, "form-boundary")
 	mw.writeField("file", "parts.csv", []byte(csvData))
+	mw.writeField("machine_name", "", []byte("Test Machine"))
 	mw.close()
 
-	req := httptest.NewRequest(http.MethodPost, "/import-csv?machine_id=99999", &buf)
+	req := httptest.NewRequest(http.MethodPost, "/import", &buf)
 	req.Header.Set("Content-Type", "multipart/form-data; boundary=form-boundary")
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d body: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d body: %s", rr.Code, rr.Body.String())
+	}
+	location := rr.Header().Get("Location")
+	if location != "/machines/1" {
+		t.Errorf("Location = %q, want %q", location, "/machines/1")
+	}
+
+	// Verify machine was created.
+	queries := db.New(sqlDB)
+	machine, err := queries.GetMachine(context.Background(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if machine.Name != "Test Machine" {
+		t.Errorf("machine name = %q, want %q", machine.Name, "Test Machine")
+	}
+
+	// Verify part was associated with the machine.
+	parts, err := queries.ListPartsByMachine(context.Background(), sql.NullInt64{Int64: 1, Valid: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("expected 1 part, got %d", len(parts))
 	}
 }
 
-func TestImportJSON_Endpoint(t *testing.T) {
+func TestImport_NoURLNoFile(t *testing.T) {
 	r, sqlDB := newImportTestRouter(t)
 	defer sqlDB.Close()
 
-	items := []jsonPartItem{
-		{Name: "Ryzen 7 5800X", Category: cpu, PurchasePrice: floatPtr(329.99), PurchasedFrom: "Amazon"},
-		{Name: "RTX 3080", Category: gpu, Manufacturer: "NVIDIA", Model: "RTX 3080"},
-	}
-	data, _ := json.Marshal(items)
-
-	req := httptest.NewRequest(http.MethodPost, "/import-json", bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodPost, "/import", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d body: %s", rr.Code, rr.Body.String())
 	}
-
-	var resp ImportResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.Imported != 2 {
-		t.Fatalf("expected 2 imported, got %d", resp.Imported)
+	if !strings.Contains(rr.Body.String(), "Provide a PCPartPicker URL or a CSV file") {
+		t.Errorf("body missing error message: %s", rr.Body.String())
 	}
 }
 
-func TestImportJSON_SkipsEmptyNames(t *testing.T) {
+func TestImport_InvalidURL(t *testing.T) {
 	r, sqlDB := newImportTestRouter(t)
 	defer sqlDB.Close()
 
-	items := []jsonPartItem{
-		{Name: "Valid Part", Category: cpu},
-		{Name: "", Category: gpu},
-		{Name: "  ", Category: ram},
+	tests := []string{
+		"not-a-url",
+		"https://example.com/list/abc",
 	}
-	data, _ := json.Marshal(items)
-
-	req := httptest.NewRequest(http.MethodPost, "/import-json", bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body: %s", rr.Code, rr.Body.String())
-	}
-
-	var resp ImportResponse
-	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
-		t.Fatal(err)
-	}
-	if resp.Imported != 1 {
-		t.Fatalf("expected 1 imported (empty names skipped), got %d", resp.Imported)
-	}
-}
-
-func TestImportURL_InvalidURL(t *testing.T) {
-	r, sqlDB := newImportTestRouter(t)
-	defer sqlDB.Close()
-
-	tests := []struct {
-		urlVal string
-	}{
-		{""},
-		{"https://example.com/list/abc"},
-		{"not-a-url"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.urlVal, func(t *testing.T) {
-			body, _ := json.Marshal(map[string]string{"url": tt.urlVal})
-			req := httptest.NewRequest(http.MethodPost, "/import-url", bytes.NewReader(body))
-			req.Header.Set("Content-Type", "application/json")
+	for _, urlVal := range tests {
+		t.Run(urlVal, func(t *testing.T) {
+			body := fmt.Sprintf("pcpartpicker_url=%s", urlVal)
+			req := httptest.NewRequest(http.MethodPost, "/import", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			rr := httptest.NewRecorder()
 			r.ServeHTTP(rr, req)
-			if rr.Code != http.StatusBadRequest {
-				t.Errorf("expected 400 for url=%q, got %d", tt.urlVal, rr.Code)
+			if rr.Code != http.StatusUnprocessableEntity {
+				t.Errorf("expected 422 for url=%q, got %d", urlVal, rr.Code)
 			}
 		})
 	}
@@ -388,32 +327,6 @@ func TestPCPPListRegex(t *testing.T) {
 	}
 }
 
-func TestItemToCreateParams(t *testing.T) {
-	price := 199.99
-	item := jsonPartItem{
-		Name:          "RTX 3080",
-		Category:      gpu,
-		Manufacturer:  "NVIDIA",
-		Model:         "Founders Edition",
-		PurchasePrice: &price,
-		PurchasedFrom: "Amazon",
-		GuideURL:      "https://pcpartpicker.com/product/abc",
-	}
-	params := itemToCreateParams(item, sql.NullInt64{})
-	if params.Name != "RTX 3080" {
-		t.Errorf("Name = %q, want %q", params.Name, "RTX 3080")
-	}
-	if !params.Manufacturer.Valid || params.Manufacturer.String != "NVIDIA" {
-		t.Errorf("Manufacturer unexpected: %+v", params.Manufacturer)
-	}
-	if !params.Model.Valid || params.Model.String != "Founders Edition" {
-		t.Errorf("Model unexpected: %+v", params.Model)
-	}
-	if !params.GuideUrl.Valid || params.GuideUrl.String != "https://pcpartpicker.com/product/abc" {
-		t.Errorf("GuideUrl unexpected: %+v", params.GuideUrl)
-	}
-}
-
 // mpWriter builds a minimal multipart form body.
 type mpWriter struct {
 	w        *bytes.Buffer
@@ -430,18 +343,19 @@ func (m *mpWriter) writeField(name, filename string, data []byte) {
 		m.w.WriteString("\r\n")
 	}
 	m.first = false
-	m.w.WriteString("--" + m.boundary + "\r\n")
-	fmt.Fprintf(m.w, "Content-Disposition: form-data; name=%q; filename=%q\r\n", name, filename)
-	m.w.WriteString("Content-Type: text/csv\r\n\r\n")
+	if filename != "" {
+		m.w.WriteString("--" + m.boundary + "\r\n")
+		fmt.Fprintf(m.w, "Content-Disposition: form-data; name=%q; filename=%q\r\n", name, filename)
+		m.w.WriteString("Content-Type: text/csv\r\n\r\n")
+	} else {
+		m.w.WriteString("--" + m.boundary + "\r\n")
+		fmt.Fprintf(m.w, "Content-Disposition: form-data; name=%q\r\n\r\n", name)
+	}
 	m.w.Write(data)
 }
 
 func (m *mpWriter) close() {
 	m.w.WriteString("\r\n--" + m.boundary + "--\r\n")
-}
-
-func floatPtr(f float64) *float64 {
-	return &f
 }
 
 func TestParsePartlistHTML(t *testing.T) {
@@ -555,7 +469,6 @@ func TestParsePartlistHTML_EmptyNameSkipped(t *testing.T) {
 }
 
 func TestImportURL_BuildGuideHTMLFallback(t *testing.T) {
-	// Set up a mock HTTP server that returns 404 for /export but HTML for the page.
 	htmlPage := []byte(`<html><body>
 <table class="partlist partlist--mini">
 <tr><td class="td__component" colspan="2"><h4>CPU</h4></td></tr>
@@ -565,25 +478,6 @@ func TestImportURL_BuildGuideHTMLFallback(t *testing.T) {
 </tr>
 </table>
 </body></html>`)
-
-	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/export") {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write(htmlPage)
-	}))
-	defer mockServer.Close()
-
-	// Temporarily override pcppClient to use the mock server.
-	origClient := pcppClient
-	pcppClient = &http.Client{Timeout: 5 * time.Second}
-	defer func() { pcppClient = origClient }()
-
-	// We need to intercept the URL. Since the handler hardcodes pcpartpicker.com,
-	// we test parsePartlistHTML directly instead (which is the core logic).
-	// The integration test above covers the fallback path via the handler.
 
 	rows, err := parsePartlistHTML(htmlPage)
 	if err != nil {

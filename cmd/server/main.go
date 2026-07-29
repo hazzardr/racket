@@ -80,7 +80,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("init web: %w", err)
 	}
-	h := handlers.New(queries, webUI)
+	h := handlers.New(sqlDB, queries, webUI)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -98,14 +98,7 @@ func run() error {
 	r.Post("/slots/{id}/delete", h.DeleteSlot)
 	r.Post("/parts/{id}/delete", h.DeletePart)
 	r.Get("/import", h.ImportPage)
-
-	r.Route("/api", func(r chi.Router) {
-		r.Route("/parts", func(r chi.Router) {
-			r.Post("/import-csv", h.ImportCSV)
-			r.Post("/import-json", h.ImportJSON)
-			r.Post("/import-url", h.ImportURL)
-		})
-	})
+	r.Post("/import", h.Import)
 
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServerFS(webUI.Static())))
 
