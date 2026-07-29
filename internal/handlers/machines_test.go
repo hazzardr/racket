@@ -14,7 +14,17 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"racket/internal/db"
+	"racket/internal/web"
 )
+
+func newTestWeb(t *testing.T) *web.Web {
+	t.Helper()
+	w, err := web.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w
+}
 
 func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -35,7 +45,7 @@ func newTestRouter(t *testing.T) (*chi.Mux, *sql.DB) {
 	t.Helper()
 	sqlDB := newTestDB(t)
 	queries := db.New(sqlDB)
-	h := New(queries)
+	h := New(queries, newTestWeb(t))
 
 	r := chi.NewRouter()
 	r.Post("/machines", h.CreateMachine)

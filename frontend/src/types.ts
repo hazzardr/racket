@@ -63,3 +63,8 @@ export interface MachineDetail {
   parts: Part[];
   slots: Slot[];
 }
+
+export interface ImportResponse {
+  imported: number;
+  parts: Part[];
+}

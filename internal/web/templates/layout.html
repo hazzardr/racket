@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Racket — Hardware Tracker</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="header">
+    <div class="container header-inner">
+      <a href="/" class="home">
+        <div class="brand">
+          <img src="/static/racket.svg" alt="" class="logo-icon">
+          <h1 class="logo">Racket</h1>
+        </div>
+        <p class="subtitle">Hardware Tracker</p>
+      </a>
+      <nav class="nav">
+        <a href="/machines">Machines</a>
+        <a href="/machines/new">New Machine</a>
+      </nav>
+    </div>
+  </header>
+  <main class="container">
+    {{block "content" .}}{{end}}
+  </main>
+</body>
+</html>

@@ -8,15 +8,13 @@ golangci-lint = "2.12.2"
 goreleaser = "2.6.1"
 
 [tasks]
-start = { run = "go run ./cmd/server", description = "build frontend and run the server on port 8080", depends = ["frontend/build"] }
+start = { run = "go run ./cmd/server", description = "run the server on port 8080" }
 
-dev = { run = '''
-mise run frontend/dev & FRONTEND_PID=$!
-trap "kill $FRONTEND_PID 2>/dev/null || true" EXIT
-go run ./cmd/server
-''', description = "run vite dev server and go server", depends = ["frontend/install"] }
+# ponytail: identical to start while templates are embedded via go:embed;
+# add a disk-reload mode only if template edit-restart cycles actually hurt
+dev = { run = "go run ./cmd/server", description = "run the server for development" }
 
-build = { run = "go build -ldflags='-s' -o=./bin/racket ./cmd/server", description = "build local binary", depends = ["frontend/build"] }
+build = { run = "go build -ldflags='-s' -o=./bin/racket ./cmd/server", description = "build local binary" }
 
 lint = { run = "golangci-lint run", description = "run golangci-lint" }
 test = { run = "go test -v ./...", description = "run tests" }

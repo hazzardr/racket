@@ -40,3 +40,5 @@ frontend/dist/
 
 # Local npm dependencies
 node_modules/
+
+.pi-subagents/artifacts

@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"racket/internal/db"
+	"racket/internal/web"
 )
 
 type MachineResponse struct {
@@ -159,10 +160,11 @@ type DashboardResponse struct {
 
 type Handler struct {
 	queries *db.Queries
+	web     *web.Web
 }
 
-func New(q *db.Queries) *Handler {
-	return &Handler{queries: q}
+func New(q *db.Queries, w *web.Web) *Handler {
+	return &Handler{queries: q, web: w}
 }
 
 func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
