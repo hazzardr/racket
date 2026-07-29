@@ -14,64 +14,23 @@ import (
 	"racket/internal/web"
 )
 
-type MachineResponse struct {
-	ID          int64   `json:"id"`
-	Name        string  `json:"name"`
-	Description *string `json:"description"`
-	Location    *string `json:"location"`
-	BuiltOn     *string `json:"built_on"`
-	PurchasedOn *string `json:"purchased_on"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
-}
-
-func newMachineResponse(m db.Machine) MachineResponse {
-	r := MachineResponse{
-		ID:        m.ID,
-		Name:      m.Name,
-		CreatedAt: m.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		UpdatedAt: m.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-	}
-	if m.Description.Valid {
-		r.Description = &m.Description.String
-	}
-	if m.Location.Valid {
-		r.Location = &m.Location.String
-	}
-	if m.BuiltOn.Valid {
-		s := m.BuiltOn.Time.Format("2006-01-02")
-		r.BuiltOn = &s
-	}
-	if m.PurchasedOn.Valid {
-		s := m.PurchasedOn.Time.Format("2006-01-02")
-		r.PurchasedOn = &s
-	}
-	return r
-}
-
 type PartResponse struct {
-	ID              int64           `json:"id"`
-	MachineID       *int64          `json:"machine_id"`
-	SlotID          *int64          `json:"slot_id"`
-	Machine         *MachineSummary `json:"machine"`
-	Name            string          `json:"name"`
-	Category        *string         `json:"category"`
-	Description     *string         `json:"description"`
-	Manufacturer    *string         `json:"manufacturer"`
-	Model           *string         `json:"model"`
-	SerialNumber    *string         `json:"serial_number"`
-	WarrantyExpires *string         `json:"warranty_expires"`
-	PurchasedOn     *string         `json:"purchased_on"`
-	PurchasedFrom   *string         `json:"purchased_from"`
-	PurchasePrice   *float64        `json:"purchase_price"`
-	GuideURL        *string         `json:"guide_url"`
-	CreatedAt       string          `json:"created_at"`
-	UpdatedAt       string          `json:"updated_at"`
-}
-
-type MachineSummary struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID              int64    `json:"id"`
+	MachineID       *int64   `json:"machine_id"`
+	SlotID          *int64   `json:"slot_id"`
+	Name            string   `json:"name"`
+	Category        *string  `json:"category"`
+	Description     *string  `json:"description"`
+	Manufacturer    *string  `json:"manufacturer"`
+	Model           *string  `json:"model"`
+	SerialNumber    *string  `json:"serial_number"`
+	WarrantyExpires *string  `json:"warranty_expires"`
+	PurchasedOn     *string  `json:"purchased_on"`
+	PurchasedFrom   *string  `json:"purchased_from"`
+	PurchasePrice   *float64 `json:"purchase_price"`
+	GuideURL        *string  `json:"guide_url"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
 }
 
 func newPartResponse(p db.Part) PartResponse {
@@ -122,42 +81,6 @@ func newPartResponse(p db.Part) PartResponse {
 	return r
 }
 
-type SlotResponse struct {
-	ID       int64             `json:"id"`
-	Category string            `json:"category"`
-	Part     *SlotPartResponse `json:"part"`
-}
-
-type SlotPartResponse struct {
-	ID    int64  `json:"id"`
-	Name  string `json:"name"`
-	Model string `json:"model"`
-}
-
-func newSlotResponse(s db.ListSlotsByMachineRow) SlotResponse {
-	resp := SlotResponse{
-		ID:       s.ID,
-		Category: s.Category,
-	}
-	if s.PartID.Valid {
-		resp.Part = &SlotPartResponse{
-			ID:   s.PartID.Int64,
-			Name: s.PartName.String,
-		}
-		if s.PartModel.Valid {
-			resp.Part.Model = s.PartModel.String
-		}
-	}
-	return resp
-}
-
-type DashboardResponse struct {
-	MachineCount int               `json:"machine_count"`
-	PartCount    int               `json:"part_count"`
-	Machines     []MachineResponse `json:"machines"`
-	Parts        []PartResponse    `json:"parts"`
-}
-
 type Handler struct {
 	queries *db.Queries
 	web     *web.Web
@@ -167,32 +90,10 @@ func New(q *db.Queries, w *web.Web) *Handler {
 	return &Handler{queries: q, web: w}
 }
 
-func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
-	machines, err := h.queries.ListMachines(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	parts, err := h.queries.ListParts(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	resp := DashboardResponse{
-		MachineCount: len(machines),
-		PartCount:    len(parts),
-		Machines:     make([]MachineResponse, len(machines)),
-		Parts:        make([]PartResponse, len(parts)),
-	}
-	for i, m := range machines {
-		resp.Machines[i] = newMachineResponse(m)
-	}
-	for i, p := range parts {
-		resp.Parts[i] = newPartResponse(p)
-	}
-
-	writeJSON(w, http.StatusOK, resp)
+// renderError renders the error page with the given status and message.
+func (h *Handler) renderError(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	slog.ErrorContext(r.Context(), "request error", "status", status, "error", msg)
+	h.web.Render(w, status, "error.html", struct{ Message string }{Message: msg})
 }
 
 func parseID(r *http.Request, name string) (int64, error) {

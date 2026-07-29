@@ -72,3 +72,6 @@ DELETE FROM machine_slots WHERE id = ?;
 
 -- name: UnassignPartsBySlot :exec
 UPDATE parts SET slot_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE slot_id = ?;
+
+-- name: DeletePartsBySlot :exec
+DELETE FROM parts WHERE slot_id = ?;

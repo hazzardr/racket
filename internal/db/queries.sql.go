@@ -151,6 +151,15 @@ func (q *Queries) DeletePart(ctx context.Context, id int64) error {
 	return err
 }
 
+const deletePartsBySlot = `-- name: DeletePartsBySlot :exec
+DELETE FROM parts WHERE slot_id = ?
+`
+
+func (q *Queries) DeletePartsBySlot(ctx context.Context, slotID sql.NullInt64) error {
+	_, err := q.db.ExecContext(ctx, deletePartsBySlot, slotID)
+	return err
+}
+
 const deleteSlot = `-- name: DeleteSlot :exec
 DELETE FROM machine_slots WHERE id = ?
 `

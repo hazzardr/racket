@@ -1,0 +1,47 @@
+{{template "page_top" .}}
+<section>
+  <h2 class="section-title">Import parts</h2>
+  <p class="lead">
+    Import from PCPartPicker as a new machine, or attach it to an existing one
+      by filling in its name.
+  </p>
+  {{if .Error}}<div class="status error">{{.Error}}</div>{{end}}
+  <div class="import-grid">
+    <div class="card">
+      <h3>
+        From
+        <a href="https://pcpartpicker.com" target="_blank" rel="noopener noreferrer" class="external-link">PCPartPicker<span class="external-link-icon" aria-label="(opens in new tab)">&#8599;</span></a>
+      </h3>
+      <form class="form" method="post" action="/import">
+        <label>
+          List URL
+          <input name="pcpartpicker_url" type="url" placeholder="https://pcpartpicker.com/list/XXXXXX" required>
+        </label>
+        <label>
+          Machine name (optional)
+          <input name="machine_name" type="text">
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="btn">Import from URL</button>
+        </div>
+      </form>
+    </div>
+    <div class="card">
+      <h3>From CSV</h3>
+      <form class="form" method="post" action="/import" enctype="multipart/form-data">
+        <label>
+          CSV file
+          <input name="file" type="file" accept=".csv,.txt" required>
+        </label>
+        <label>
+          Machine name (optional)
+          <input name="machine_name" type="text">
+        </label>
+        <div class="form-actions">
+          <button type="submit" class="btn">Import CSV</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+{{template "page_bottom" .}}

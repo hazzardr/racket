@@ -1,3 +1,4 @@
+{{define "page_top" -}}
 <!doctype html>
 <html lang="en">
 <head>
@@ -24,7 +25,10 @@
     </div>
   </header>
   <main class="container">
-    {{block "content" .}}{{end}}
+{{- end}}
+
+{{define "page_bottom" -}}
   </main>
 </body>
 </html>
+{{- end}}

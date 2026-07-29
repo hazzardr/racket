@@ -1,0 +1,32 @@
+{{template "page_top" .}}
+  <section>
+    <h2 class="section-title">New machine</h2>
+    <form class="form" method="post" action="/machines">
+      <label>
+        Name
+        <input name="name" type="text" value="{{.Name}}" required>
+      </label>
+      <label>
+        Description
+        <input name="description" type="text" value="{{.Description}}">
+      </label>
+      <label>
+        Location
+        <input name="location" type="text" value="{{.Location}}">
+      </label>
+      <label>
+        Build date
+        <input name="built_on" type="date" value="{{.BuiltOn}}">
+      </label>
+      <label>
+        Purchase date
+        <input name="purchased_on" type="date" value="{{.PurchasedOn}}">
+      </label>
+      {{if .Error}}<div class="status error">{{.Error}}</div>{{end}}
+      <div class="form-actions">
+        <button type="submit" class="btn">Save machine</button>
+        <a href="/machines" class="btn-secondary">Cancel</a>
+      </div>
+    </form>
+  </section>
+{{template "page_bottom" .}}

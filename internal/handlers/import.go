@@ -33,6 +33,16 @@ var (
 	pcppClient = &http.Client{Timeout: 30 * time.Second}
 )
 
+// importPage is the import form state (also used for failure re-renders).
+type importPage struct {
+	Error string
+}
+
+// ImportPage renders GET /import.
+func (h *Handler) ImportPage(w http.ResponseWriter, _ *http.Request) {
+	h.web.Render(w, http.StatusOK, "import.html", importPage{})
+}
+
 // parsePrice strips currency symbols and commas, then parses a float.
 // Returns 0 and false if the string is empty or unparseable.
 func parsePrice(s string) (float64, bool) {

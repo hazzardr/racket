@@ -23,7 +23,7 @@ import (
 
 func newImportTestRouter(t *testing.T) (*chi.Mux, *sql.DB) {
 	t.Helper()
-	sqlDB, err := sql.Open("sqlite", ":memory:")
+	sqlDB, err := sql.Open("sqlite", "file::memory:?_pragma=foreign_keys(1)")
 	if err != nil {
 		t.Fatal(err)
 	}

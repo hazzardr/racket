@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -36,13 +37,27 @@ func main() {
 	}
 }
 
+// sqliteDSN turns a plain path into a file: URI with foreign key enforcement
+// enabled. SQLite defaults PRAGMA foreign_keys to off, which would silently
+// disable the schema's ON DELETE CASCADE/SET NULL clauses.
+func sqliteDSN(path string) string {
+	if !strings.HasPrefix(path, "file:") {
+		path = "file:" + path
+	}
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + "_pragma=foreign_keys(1)"
+}
+
 func run() error {
 	dsn := os.Getenv("RACKET_DB")
 	if dsn == "" {
 		dsn = "racket.db"
 	}
 
-	sqlDB, err := sql.Open("sqlite", dsn)
+	sqlDB, err := sql.Open("sqlite", sqliteDSN(dsn))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -71,35 +86,24 @@ func run() error {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
+	r.Get("/", h.Landing)
+	r.Get("/machines", h.MachinesPage)
+	r.Get("/machines/new", h.NewMachinePage)
+	r.Post("/machines", h.CreateMachine)
+	r.Get("/machines/{id}", h.MachineDetailPage)
+	r.Post("/machines/{id}/delete", h.DeleteMachine)
+	r.Post("/machines/{id}/slots", h.CreateSlot)
+	r.Post("/slots/{id}/part", h.AssignPart)
+	r.Post("/slots/{id}/part/delete", h.UnassignPart)
+	r.Post("/slots/{id}/delete", h.DeleteSlot)
+	r.Post("/parts/{id}/delete", h.DeletePart)
+	r.Get("/import", h.ImportPage)
+
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/dashboard", h.Dashboard)
-
-		r.Route("/machines", func(r chi.Router) {
-			r.Get("/", h.ListMachines)
-			r.Post("/", h.CreateMachine)
-			r.Route("/{id}", func(r chi.Router) {
-				r.Get("/", h.GetMachine)
-				r.Put("/", h.UpdateMachine)
-				r.Delete("/", h.DeleteMachine)
-				r.Post("/slots", h.CreateSlot)
-			})
-		})
-
 		r.Route("/parts", func(r chi.Router) {
-			r.Get("/", h.ListParts)
-			r.Post("/", h.CreatePart)
 			r.Post("/import-csv", h.ImportCSV)
 			r.Post("/import-json", h.ImportJSON)
 			r.Post("/import-url", h.ImportURL)
-			r.Route("/{id}", func(r chi.Router) {
-				r.Get("/", h.GetPart)
-				r.Put("/", h.UpdatePart)
-				r.Delete("/", h.DeletePart)
-			})
-		})
-
-		r.Route("/slots", func(r chi.Router) {
-			r.Delete("/{id}", h.DeleteSlot)
 		})
 	})
 
