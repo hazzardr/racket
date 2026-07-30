@@ -1,17 +1,11 @@
 [tools]
 go = "1.26.4"
-node = "24.18.0"
-pnpm = "10.8.0"
 "go:github.com/sqlc-dev/sqlc/cmd/sqlc" = "1.31.1"
 "go:github.com/pressly/goose/v3/cmd/goose" = "3.27.1"
 golangci-lint = "2.12.2"
 goreleaser = "2.6.1"
 
 [tasks]
-start = { run = "go run ./cmd/server", description = "run the server on port 8080" }
-
-# ponytail: identical to start while templates are embedded via go:embed;
-# add a disk-reload mode only if template edit-restart cycles actually hurt
 dev = { run = "go run ./cmd/server", description = "run the server for development" }
 
 build = { run = "go build -ldflags='-s' -o=./bin/racket ./cmd/server", description = "build local binary" }
@@ -19,7 +13,3 @@ build = { run = "go build -ldflags='-s' -o=./bin/racket ./cmd/server", descripti
 lint = { run = "golangci-lint run", description = "run golangci-lint" }
 test = { run = "go test -v ./...", description = "run tests" }
 fmt = { run = "go fmt ./...", description = "format the project" }
-
-"frontend/install" = { run = "pnpm install --frozen-lockfile", description = "install frontend dependencies", dir = "frontend", env = { CI = "true" } }
-"frontend/build" = { run = "pnpm run build", description = "build frontend for production", dir = "frontend", depends = ["frontend/install"] }
-"frontend/dev" = { run = "pnpm run dev", description = "run vite dev server", dir = "frontend" }

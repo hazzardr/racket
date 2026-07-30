@@ -23,6 +23,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func init() {
+	goose.SetDialect("sqlite3")
+}
+
 func main() {
 	logger := log.NewWithOptions(os.Stderr, log.Options{
 		ReportCaller:    true,
@@ -67,9 +71,6 @@ func run() error {
 		return fmt.Errorf("ping database: %w", err)
 	}
 
-	if err := goose.SetDialect(string(goose.DialectSQLite3)); err != nil {
-		return fmt.Errorf("set goose dialect: %w", err)
-	}
 	if err := goose.Up(sqlDB, "migrations"); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
@@ -98,6 +99,7 @@ func run() error {
 	r.Post("/slots/{id}/delete", h.DeleteSlot)
 	r.Post("/parts/{id}/delete", h.DeletePart)
 	r.Get("/import", h.ImportPage)
+
 	r.Post("/import", h.Import)
 
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServerFS(webUI.Static())))

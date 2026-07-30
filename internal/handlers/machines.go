@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -16,6 +17,16 @@ var defaultSlots = []string{"Motherboard", "CPU", "RAM", "RAM", "Storage", "Stor
 
 // commonSlots are the category chips offered on the machine detail page.
 var commonSlots = []string{"Motherboard", "CPU", "RAM", "Storage", "GPU", "PSU", "Case"}
+
+// seedDefaultSlots creates the default slot categories for a new machine.
+// Failures are logged but not fatal (slots can be added manually later).
+func (h *Handler) seedDefaultSlots(ctx context.Context, q *db.Queries, machineID int64) {
+	for _, cat := range defaultSlots {
+		if _, err := q.CreateSlot(ctx, db.CreateSlotParams{MachineID: machineID, Category: cat}); err != nil {
+			slog.WarnContext(ctx, "failed to seed slot", "machine", machineID, "category", cat, "error", err)
+		}
+	}
+}
 
 // machineRow is a machine list entry with computed slot-fill and price totals.
 type machineRow struct {
@@ -165,19 +176,9 @@ func (h *Handler) CreateMachine(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
-	for _, cat := range defaultSlots {
-		_, err := h.queries.CreateSlot(r.Context(), db.CreateSlotParams{MachineID: machine.ID, Category: cat})
-		if err != nil {
-			slog.WarnContext(r.Context(), "failed to seed slot", "machine", machine.ID, "category", cat, "error", err)
-		}
-	}
+	h.seedDefaultSlots(r.Context(), h.queries, machine.ID)
 
-	url := fmt.Sprintf("/machines/%d", machine.ID)
-	if r.Header.Get("Hx-Request") == "" {
-		http.Redirect(w, r, url, http.StatusSeeOther)
-		return
-	}
-	w.Header().Set("Hx-Redirect", url)
+	redirectNativeOrHX(w, r, fmt.Sprintf("/machines/%d", machine.ID))
 }
 
 // DeleteMachine handles POST /machines/{id}/delete and redirects to the list.
@@ -191,9 +192,5 @@ func (h *Handler) DeleteMachine(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if r.Header.Get("Hx-Request") == "" {
-		http.Redirect(w, r, "/machines", http.StatusSeeOther)
-		return
-	}
-	w.Header().Set("Hx-Redirect", "/machines")
+	redirectNativeOrHX(w, r, "/machines")
 }

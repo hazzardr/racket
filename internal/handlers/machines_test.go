@@ -20,6 +20,10 @@ import (
 	"racket/internal/web"
 )
 
+func init() {
+	goose.SetDialect("sqlite3")
+}
+
 func newTestWeb(t *testing.T) *web.Web {
 	t.Helper()
 	w, err := web.New()
@@ -34,9 +38,6 @@ func newTestDB(t *testing.T) *sql.DB {
 	// FK enforcement matches the production DSN (see sqliteDSN in cmd/server).
 	db, err := sql.Open("sqlite", "file::memory:?_pragma=foreign_keys(1)")
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := goose.SetDialect("sqlite3"); err != nil {
 		t.Fatal(err)
 	}
 	if err := goose.Up(db, "../../migrations"); err != nil {

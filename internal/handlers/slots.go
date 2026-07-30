@@ -48,18 +48,6 @@ func (h *Handler) getSlot(w http.ResponseWriter, r *http.Request, id int64) (db.
 	return slot, true
 }
 
-// nativeRedirect issues a 303 redirect for native (non-htmx) form posts and
-// reports whether the request was native. Fragment handlers return early when
-// it is; htmx requests carry on and render their fragment.
-func nativeRedirect(w http.ResponseWriter, r *http.Request, machineID int64) bool {
-	if r.Header.Get("Hx-Request") != "" {
-		return false
-	}
-	//nolint:gosec // path is built from an int64 id only — no taint possible
-	http.Redirect(w, r, fmt.Sprintf("/machines/%d", machineID), http.StatusSeeOther)
-	return true
-}
-
 // AssignPart handles POST /slots/{id}/part: creates a part in the slot and
 // returns the updated slot card fragment.
 func (h *Handler) AssignPart(w http.ResponseWriter, r *http.Request) {
@@ -101,16 +89,16 @@ func (h *Handler) AssignPart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if nativeRedirect(w, r, slot.MachineID) {
+	if redirectNativeOrHX(w, r, fmt.Sprintf("/machines/%d", slot.MachineID)) {
 		return
 	}
 	h.web.Fragment(w, "slot_card", slotVM(slot, &part))
 }
 
 // renderFilledSlotError re-renders the slot card in its filled state with an
-// error, for double-fill attempts.
+// error, for double-fill attempts. Queries the current slot state to show the
+// already-assigned part in the card.
 func (h *Handler) renderFilledSlotError(w http.ResponseWriter, r *http.Request, slot db.MachineSlot) {
-	card := slotVM(slot, nil)
 	rows, err := h.queries.ListSlotsByMachine(r.Context(), slot.MachineID)
 	if err != nil {
 		h.renderError(w, r, http.StatusInternalServerError, err.Error())
@@ -118,12 +106,12 @@ func (h *Handler) renderFilledSlotError(w http.ResponseWriter, r *http.Request, 
 	}
 	for _, row := range rows {
 		if row.ID == slot.ID {
-			card.ListSlotsByMachineRow = row
-			break
+			card := slotCard{ListSlotsByMachineRow: row, Error: "Slot already filled."}
+			h.web.Fragment(w, "slot_card", card)
+			return
 		}
 	}
-	card.Error = "Slot already filled."
-	h.web.Fragment(w, "slot_card", card)
+	h.renderError(w, r, http.StatusInternalServerError, "slot not found in machine")
 }
 
 // UnassignPart handles POST /slots/{id}/part/delete: deletes the part in the
@@ -143,7 +131,7 @@ func (h *Handler) UnassignPart(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if nativeRedirect(w, r, slot.MachineID) {
+	if redirectNativeOrHX(w, r, fmt.Sprintf("/machines/%d", slot.MachineID)) {
 		return
 	}
 	h.web.Fragment(w, "slot_card", slotVM(slot, nil))
@@ -184,7 +172,7 @@ func (h *Handler) CreateSlot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if nativeRedirect(w, r, machineID) {
+	if redirectNativeOrHX(w, r, fmt.Sprintf("/machines/%d", machineID)) {
 		return
 	}
 	h.web.Fragment(w, "slot_card", slotVM(slot, nil))
@@ -211,7 +199,7 @@ func (h *Handler) DeleteSlot(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if nativeRedirect(w, r, slot.MachineID) {
+	if redirectNativeOrHX(w, r, fmt.Sprintf("/machines/%d", slot.MachineID)) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)

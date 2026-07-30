@@ -31,3 +31,14 @@ func (h *Handler) renderError(w http.ResponseWriter, r *http.Request, status int
 func parseID(r *http.Request, name string) (int64, error) {
 	return strconv.ParseInt(chi.URLParam(r, name), 10, 64)
 }
+
+// redirectNativeOrHX issues a 303 for native requests or sets Hx-Redirect for htmx.
+// Returns true if the response was written (native redirect) so callers can return early.
+func redirectNativeOrHX(w http.ResponseWriter, r *http.Request, url string) bool {
+	if r.Header.Get("Hx-Request") == "" {
+		http.Redirect(w, r, url, http.StatusSeeOther)
+		return true
+	}
+	w.Header().Set("Hx-Redirect", url)
+	return false
+}

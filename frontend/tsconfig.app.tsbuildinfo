@@ -1,1 +1,0 @@
-{"root":["./src/main.ts","./src/router.ts","./src/types.ts","./src/api/machines.ts","./src/api/parts.ts","./src/api/slots.ts","./src/App.vue","./src/components/MachinesSection.vue","./src/views/LandingView.vue","./src/views/MachineDetailView.vue","./src/views/MachinesView.vue","./src/views/NewMachineView.vue"],"version":"5.7.3"}
