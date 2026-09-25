@@ -1,7 +1,4 @@
--- DRAFT: replacement schema for racket (multi-user, racks, build planning).
---
--- Not wired up yet. Once reviewed, this replaces both files in migrations/
--- as a single squashed initial migration (the existing database has no data).
+-- Initial schema: multi-user hardware tracking, build planning, and racks.
 --
 -- Model:
 --   users ─┬─< sessions

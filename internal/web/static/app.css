@@ -8,6 +8,7 @@
   --color-text: #e4e6eb;
   --color-text-muted: #9ca0b0;
   --color-accent: #6ea8fe;
+  --color-borrowed: #e0a458;
 }
 
 * {
@@ -320,29 +321,104 @@ body {
   font-size: 0.875rem;
 }
 
-.other-parts {
-  margin-top: 1rem;
+.slot-form .checkbox,
+.form .checkbox {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
 }
 
-.other-parts h3 {
-  font-size: 1.125rem;
-  margin-bottom: 0.75rem;
+.form select {
+  padding: 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.25rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
 }
 
-.other-parts ul {
-  list-style: none;
+/* Where a slot's part comes from, relative to the machine's owner. */
+
+.slot-borrowed {
+  border-color: var(--color-borrowed);
+}
+
+.slot-former_member {
+  border-color: var(--color-text-muted);
+}
+
+.slot-unpurchased {
+  border-style: dashed;
+}
+
+.slot-unpurchased .part-name {
+  color: var(--color-text-muted);
+}
+
+.part-price {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.part-badge,
+.badge {
+  border-radius: 999px;
+  padding: 0.0625rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.badge-borrowed {
+  border-color: var(--color-borrowed);
+  color: var(--color-borrowed);
+}
+
+.badge-unpurchased {
+  border-style: dashed;
+}
+
+.machine-mine {
+  border-left: 3px solid var(--color-accent);
+}
+
+/* Header sign-in state */
+
+.nav {
+  align-items: center;
+}
+
+.nav-user {
+  color: var(--color-text);
+  font-size: 0.9375rem;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 0.9375rem;
+  cursor: pointer;
   padding: 0;
 }
 
-.other-parts li {
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--color-border);
+.btn-link:hover {
+  color: var(--color-text);
 }
 
-.part-category {
-  color: var(--color-text-muted);
-  font-size: 0.875rem;
-  margin-left: 0.5rem;
+.login .btn {
+  margin-top: 0.5rem;
+}
+
+.dev-login {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px dashed var(--color-border);
 }
 
 /* New machine page */

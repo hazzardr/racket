@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"math"
 	"time"
 )
 
@@ -21,4 +22,9 @@ func optionalString(s string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: s, Valid: true}
+}
+
+// toCents converts a decimal amount to whole cents, rounding to the nearest.
+func toCents(amount float64) int64 {
+	return int64(math.Round(amount * 100))
 }

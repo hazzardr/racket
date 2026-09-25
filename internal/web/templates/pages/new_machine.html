@@ -1,10 +1,25 @@
 {{template "page_top" .}}
+{{with .Data}}
   <section>
     <h2 class="section-title">New machine</h2>
     <form class="form" method="post" action="/machines">
       <label>
         Name
         <input name="name" type="text" value="{{.Name}}" required>
+      </label>
+      <label>
+        Kind
+        <select name="kind">
+          {{$kind := .Kind}}
+          {{range .Kinds}}<option value="{{.}}"{{if eq . $kind}} selected{{end}}>{{.}}</option>{{end}}
+        </select>
+      </label>
+      <label>
+        Status
+        <select name="status">
+          {{$status := .Status}}
+          {{range .Statuses}}<option value="{{.}}"{{if eq . $status}} selected{{end}}>{{.}}</option>{{end}}
+        </select>
       </label>
       <label>
         Description
@@ -29,4 +44,5 @@
       </div>
     </form>
   </section>
+{{end}}
 {{template "page_bottom" .}}

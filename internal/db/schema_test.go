@@ -1,28 +1,22 @@
 package db_test
 
-// Tests for the draft schema and permission queries in docs/. They load the
-// draft files directly so the rules are pinned down before the schema replaces
-// migrations/. Once it does, point newDraftDB at migrations.FS and call the
-// sqlc-generated queries instead of loadDraftQueries.
+// Tests for the schema's rules and the permission-bearing queries: per-owner
+// names, one part per slot, borrowing, slot labels, and what leaving or
+// deleting leaves behind.
 
 import (
-	"bufio"
-	"bytes"
 	"database/sql"
-	"os"
-	"regexp"
+	"errors"
 	"strings"
 	"testing"
-	"testing/fstest"
+	"time"
 
 	"github.com/pressly/goose/v3"
 
-	_ "modernc.org/sqlite"
-)
+	"racket/internal/db"
+	"racket/migrations"
 
-const (
-	draftSchemaPath  = "../../docs/schema-draft.sql"
-	draftQueriesPath = "../../docs/queries-draft.sql"
+	_ "modernc.org/sqlite"
 )
 
 // Fixture IDs. Alice and Bob each have a machine; Carol has one too, so there
@@ -36,9 +30,7 @@ const (
 
 	aliceGPUSlot int64 = 1
 	aliceCPUSlot int64 = 2
-	aliceRAMSlot int64 = 3
 	alicePSUSlot int64 = 4
-	bobCPUSlot   int64 = 5
 	bobGPUSlot   int64 = 6
 	carolGPUSlot int64 = 7
 
@@ -54,10 +46,10 @@ INSERT INTO users (id, discord_id, username) VALUES
     (1, '100', 'alice'), (2, '200', 'bob'), (3, '300', 'carol');
 INSERT INTO machines (id, owner_id, name) VALUES
     (1, 1, 'alice-pc'), (2, 2, 'bob-pc'), (3, 3, 'carol-pc');
-INSERT INTO machine_slots (id, machine_id, category) VALUES
-    (1, 1, 'GPU'), (2, 1, 'CPU'), (3, 1, 'RAM'), (4, 1, 'PSU'),
-    (5, 2, 'CPU'), (6, 2, 'GPU'),
-    (7, 3, 'GPU');
+INSERT INTO machine_slots (id, machine_id, category, position) VALUES
+    (1, 1, 'GPU', 0), (2, 1, 'CPU', 1), (3, 1, 'RAM', 2), (4, 1, 'PSU', 3),
+    (5, 2, 'CPU', 0), (6, 2, 'GPU', 1),
+    (7, 3, 'GPU', 0);
 INSERT INTO parts (id, owner_id, slot_id, status, name) VALUES
     (10, 1, NULL, 'owned',  'Ryzen 7 5700X'),
     (11, 1, NULL, 'wanted', 'Corsair RM850x'),
@@ -66,13 +58,25 @@ INSERT INTO parts (id, owner_id, slot_id, status, name) VALUES
     (22, 2, 5,    'owned',  'Ryzen 5 7600');
 `
 
-// newDraftDB returns an in-memory database migrated with the draft schema.
-func newDraftDB(t *testing.T) *sql.DB {
+const (
+	// lendBobsGPUToAlice puts Bob's spare GPU in Alice's machine.
+	lendBobsGPUToAlice = `UPDATE parts SET slot_id = 1 WHERE id = 20`
+	// installAliceCPU puts Alice's CPU in her own machine.
+	installAliceCPU = `UPDATE parts SET slot_id = 2 WHERE id = 10`
+)
+
+func newProvider(t *testing.T, sqlDB *sql.DB) *goose.Provider {
 	t.Helper()
-	schema, err := os.ReadFile(draftSchemaPath)
+	p, err := goose.NewProvider(goose.DialectSQLite3, sqlDB, migrations.FS)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return p
+}
+
+// newTestDB returns an in-memory database with the migrations applied.
+func newTestDB(t *testing.T) *sql.DB {
+	t.Helper()
 	// FK enforcement matches the production DSN (see sqliteDSN in cmd/server).
 	sqlDB, err := sql.Open("sqlite", "file::memory:?_pragma=foreign_keys(1)")
 	if err != nil {
@@ -81,24 +85,18 @@ func newDraftDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { sqlDB.Close() })
 	// Each pooled connection would get its own empty :memory: database.
 	sqlDB.SetMaxOpenConns(1)
-
-	p, err := goose.NewProvider(goose.DialectSQLite3, sqlDB,
-		fstest.MapFS{"00001_init.sql": {Data: schema}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.Up(t.Context()); err != nil {
+	if _, err := newProvider(t, sqlDB).Up(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	return sqlDB
 }
 
-// newSeededDB returns a draft database loaded with the fixture above.
-func newSeededDB(t *testing.T) *sql.DB {
+// newSeededDB returns a migrated database loaded with the fixture above.
+func newSeededDB(t *testing.T) (*sql.DB, *db.Queries) {
 	t.Helper()
-	sqlDB := newDraftDB(t)
+	sqlDB := newTestDB(t)
 	exec(t, sqlDB, seedSQL)
-	return sqlDB
+	return sqlDB, db.New(sqlDB)
 }
 
 func exec(t *testing.T, sqlDB *sql.DB, query string, args ...any) {
@@ -117,62 +115,9 @@ func count(t *testing.T, sqlDB *sql.DB, query string, args ...any) int {
 	return n
 }
 
-var sqlcArgRe = regexp.MustCompile(`sqlc\.arg\((\w+)\)`)
-
-// loadDraftQueries splits the draft queries file on sqlc's "-- name:" markers
-// and rewrites sqlc.arg(x) as :x, so the driver binds them with sql.Named.
-func loadDraftQueries(t *testing.T) map[string]string {
-	t.Helper()
-	raw, err := os.ReadFile(draftQueriesPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	queries := map[string]string{}
-	var name string
-	var body strings.Builder
-	flush := func() {
-		if name != "" {
-			queries[name] = sqlcArgRe.ReplaceAllString(body.String(), ":$1")
-		}
-		body.Reset()
-	}
-	sc := bufio.NewScanner(bytes.NewReader(raw))
-	for sc.Scan() {
-		line := sc.Text()
-		if rest, ok := strings.CutPrefix(line, "-- name: "); ok {
-			flush()
-			name = strings.Fields(rest)[0]
-			continue
-		}
-		body.WriteString(line + "\n")
-	}
-	if err := sc.Err(); err != nil {
-		t.Fatal(err)
-	}
-	flush()
-	return queries
-}
-
-func draftQuery(t *testing.T, name string) string {
-	t.Helper()
-	q, ok := loadDraftQueries(t)[name]
-	if !ok {
-		t.Fatalf("query %q not found in %s", name, draftQueriesPath)
-	}
-	return q
-}
-
-func TestDraftSchemaUpDown(t *testing.T) {
-	schema, err := os.ReadFile(draftSchemaPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sqlDB := newDraftDB(t)
-	p, err := goose.NewProvider(goose.DialectSQLite3, sqlDB,
-		fstest.MapFS{"00001_init.sql": {Data: schema}})
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestMigrationsUpDown(t *testing.T) {
+	sqlDB := newTestDB(t)
+	p := newProvider(t, sqlDB)
 
 	if _, err := p.DownTo(t.Context(), 0); err != nil {
 		t.Fatalf("down: %v", err)
@@ -187,7 +132,7 @@ func TestDraftSchemaUpDown(t *testing.T) {
 	}
 }
 
-func TestDraftSchemaConstraints(t *testing.T) {
+func TestSchemaConstraints(t *testing.T) {
 	const (
 		unique = "UNIQUE constraint failed"
 		check  = "CHECK constraint failed"
@@ -269,7 +214,7 @@ func TestDraftSchemaConstraints(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sqlDB := newSeededDB(t)
+			sqlDB, _ := newSeededDB(t)
 			exec(t, sqlDB, `INSERT INTO racks (id, owner_id, name) VALUES (1, 1, 'lab')`)
 			exec(t, sqlDB, `INSERT INTO rack_mounts (rack_id, machine_id, position_u, height_u)
 				VALUES (1, 1, 10, 2)`)
@@ -287,16 +232,18 @@ func TestDraftSchemaConstraints(t *testing.T) {
 	}
 }
 
-// lendBobsGPUToAlice puts Bob's spare GPU in Alice's machine.
-const lendBobsGPUToAlice = `UPDATE parts SET slot_id = 1 WHERE id = 20`
-
 // bobLeaves soft-deletes Bob.
-const bobLeaves = `UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = 2`
+func bobLeaves(t *testing.T, q *db.Queries) {
+	t.Helper()
+	if _, err := q.SoftDeleteUser(t.Context(), bob); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestAssignPartToSlot(t *testing.T) {
 	tests := []struct {
 		name  string
-		setup string
+		setup func(*testing.T, *sql.DB, *db.Queries)
 		user  int64
 		part  int64
 		slot  int64
@@ -310,34 +257,32 @@ func TestAssignPartToSlot(t *testing.T) {
 		{name: "can't put parts in a friend's machine", user: bob, part: bobSpareGPU, slot: aliceGPUSlot},
 		{
 			name:  "can't take a part already lent to someone else",
-			setup: lendBobsGPUToAlice,
+			setup: func(t *testing.T, sqlDB *sql.DB, _ *db.Queries) { exec(t, sqlDB, lendBobsGPUToAlice) },
 			user:  carol, part: bobSpareGPU, slot: carolGPUSlot,
 		},
 		{
 			name:  "can't borrow from a former member",
-			setup: bobLeaves,
+			setup: func(t *testing.T, _ *sql.DB, q *db.Queries) { bobLeaves(t, q) },
 			user:  alice, part: bobSpareGPU, slot: aliceGPUSlot,
 		},
 		{
 			name:  "owner can move a lent part back into their own machine",
-			setup: lendBobsGPUToAlice,
+			setup: func(t *testing.T, sqlDB *sql.DB, _ *db.Queries) { exec(t, sqlDB, lendBobsGPUToAlice) },
 			user:  bob, part: bobSpareGPU, slot: bobGPUSlot, want: true,
 		},
 	}
-	query := draftQuery(t, "AssignPartToSlot")
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sqlDB := newSeededDB(t)
-			if tt.setup != "" {
-				exec(t, sqlDB, tt.setup)
+			sqlDB, q := newSeededDB(t)
+			if tt.setup != nil {
+				tt.setup(t, sqlDB, q)
 			}
 
-			res, err := sqlDB.ExecContext(t.Context(), query,
-				sql.Named("slot_id", tt.slot), sql.Named("part_id", tt.part), sql.Named("user_id", tt.user))
-			if err != nil {
-				t.Fatal(err)
-			}
-			n, err := res.RowsAffected()
+			n, err := q.AssignPartToSlot(t.Context(), db.AssignPartToSlotParams{
+				SlotID: sql.NullInt64{Int64: tt.slot, Valid: true},
+				PartID: tt.part,
+				UserID: tt.user,
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -365,19 +310,13 @@ func TestUnassignPart(t *testing.T) {
 		{name: "outsider can't remove a lent part", user: carol, part: bobSpareGPU},
 		{name: "lender can't remove the builder's own parts", user: bob, part: aliceCPU},
 	}
-	query := draftQuery(t, "UnassignPart")
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sqlDB := newSeededDB(t)
+			sqlDB, q := newSeededDB(t)
 			exec(t, sqlDB, lendBobsGPUToAlice)
-			exec(t, sqlDB, `UPDATE parts SET slot_id = 2 WHERE id = 10`)
+			exec(t, sqlDB, installAliceCPU)
 
-			res, err := sqlDB.ExecContext(t.Context(), query,
-				sql.Named("part_id", tt.part), sql.Named("user_id", tt.user))
-			if err != nil {
-				t.Fatal(err)
-			}
-			n, err := res.RowsAffected()
+			n, err := q.UnassignPart(t.Context(), db.UnassignPartParams{PartID: tt.part, UserID: tt.user})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -395,35 +334,32 @@ func TestUnassignPart(t *testing.T) {
 type slotLabel struct{ category, owner, source string }
 
 // slotLabels lists a machine's slots as the UI would label them.
-func slotLabels(t *testing.T, sqlDB *sql.DB, machineID int64) []slotLabel {
+func slotLabels(t *testing.T, q *db.Queries, machineID int64) []slotLabel {
 	t.Helper()
-	rows, err := sqlDB.QueryContext(t.Context(), draftQuery(t, "ListSlotsByMachine"), machineID)
+	rows, err := q.ListSlotsByMachine(t.Context(), machineID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
-
-	var got []slotLabel
-	for rows.Next() {
-		var (
-			id                        int64
-			category, source          string
-			partID                    sql.NullInt64
-			partName, status, ownerNm sql.NullString
-		)
-		if err := rows.Scan(&id, &category, &partID, &partName, &status, &ownerNm, &source); err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, slotLabel{category, ownerNm.String, source})
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
+	got := make([]slotLabel, 0, len(rows))
+	for _, r := range rows {
+		got = append(got, slotLabel{r.Category, r.PartOwnerName.String, r.PartSource})
 	}
 	return got
 }
 
-func assertSlotLabels(t *testing.T, got, want []slotLabel) {
-	t.Helper()
+func TestSlotPartSourceLabels(t *testing.T) {
+	sqlDB, q := newSeededDB(t)
+	exec(t, sqlDB, lendBobsGPUToAlice)
+	exec(t, sqlDB, installAliceCPU)
+	exec(t, sqlDB, `UPDATE parts SET slot_id = 4 WHERE id = 11`)
+
+	got := slotLabels(t, q, aliceMachine)
+	want := []slotLabel{
+		{"GPU", "bob", "borrowed"},
+		{"CPU", "alice", "own"},
+		{"RAM", "", "empty"},
+		{"PSU", "alice", "unpurchased"},
+	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d slots, want %d: %v", len(got), len(want), got)
 	}
@@ -434,47 +370,95 @@ func assertSlotLabels(t *testing.T, got, want []slotLabel) {
 	}
 }
 
-func TestSlotPartSourceLabels(t *testing.T) {
-	sqlDB := newSeededDB(t)
-	exec(t, sqlDB, lendBobsGPUToAlice)
-	exec(t, sqlDB, `UPDATE parts SET slot_id = 2 WHERE id = 10`)
-	exec(t, sqlDB, `UPDATE parts SET slot_id = 4 WHERE id = 11`)
+func TestCreateSlotAppends(t *testing.T) {
+	_, q := newSeededDB(t)
+	slot, err := q.CreateSlot(t.Context(), db.CreateSlotParams{MachineID: aliceMachine, Category: "NIC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slot.Position != 4 {
+		t.Errorf("position = %d, want 4 (after the 4 existing slots)", slot.Position)
+	}
+	if got := slotLabels(t, q, aliceMachine); got[len(got)-1].category != "NIC" {
+		t.Errorf("new slot isn't last: %v", got)
+	}
+}
 
-	assertSlotLabels(t, slotLabels(t, sqlDB, aliceMachine), []slotLabel{
-		{"GPU", "bob", "borrowed"},
-		{"CPU", "alice", "own"},
-		{"RAM", "", "empty"},
-		{"PSU", "alice", "unpurchased"},
-	})
+func TestListMachinesTotals(t *testing.T) {
+	sqlDB, q := newSeededDB(t)
+	exec(t, sqlDB, `UPDATE parts SET price_cents = 25000 WHERE id = 10`)
+	exec(t, sqlDB, `UPDATE parts SET price_cents = 40000 WHERE id = 20`)
+	exec(t, sqlDB, lendBobsGPUToAlice)
+	exec(t, sqlDB, installAliceCPU)
+
+	machines, err := q.ListMachines(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range machines {
+		if m.Machine.ID != aliceMachine {
+			continue
+		}
+		if m.OwnerName != "alice" || m.TotalSlots != 4 || m.FilledSlots != 2 || m.PartsTotalCents != 65000 {
+			t.Errorf("alice-pc = %+v, want owner alice, 2/4 slots, 65000 cents", m)
+		}
+		return
+	}
+	t.Fatal("alice-pc not listed")
+}
+
+func TestSessions(t *testing.T) {
+	_, q := newSeededDB(t)
+	now := time.Now().UTC()
+	for _, s := range []db.CreateSessionParams{
+		{TokenHash: []byte("live"), UserID: alice, ExpiresAt: now.Add(time.Hour)},
+		{TokenHash: []byte("expired"), UserID: alice, ExpiresAt: now.Add(-time.Second)},
+		{TokenHash: []byte("bob"), UserID: bob, ExpiresAt: now.Add(time.Hour)},
+	} {
+		if err := q.CreateSession(t.Context(), s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lookup := func(token string) (db.User, error) {
+		return q.GetSessionUser(t.Context(), db.GetSessionUserParams{TokenHash: []byte(token), Now: now})
+	}
+
+	if u, err := lookup("live"); err != nil || u.ID != alice {
+		t.Errorf("live session: got user %d, err %v", u.ID, err)
+	}
+	if _, err := lookup("expired"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("expired session: err = %v, want sql.ErrNoRows", err)
+	}
+	if _, err := lookup("unknown"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("unknown token: err = %v, want sql.ErrNoRows", err)
+	}
+	bobLeaves(t, q)
+	if _, err := lookup("bob"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("session of a user who left: err = %v, want sql.ErrNoRows", err)
+	}
 }
 
 func TestSoftDeletedUser(t *testing.T) {
-	sqlDB := newSeededDB(t)
+	sqlDB, q := newSeededDB(t)
 	exec(t, sqlDB, lendBobsGPUToAlice)
 	exec(t, sqlDB, `INSERT INTO sessions (token_hash, user_id, expires_at)
 		VALUES (x'00', 2, CURRENT_TIMESTAMP)`)
 	machineCount := func() int {
 		t.Helper()
-		rows, err := sqlDB.QueryContext(t.Context(), draftQuery(t, "ListMachines"))
+		machines, err := q.ListMachines(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer rows.Close()
-		n := 0
-		for rows.Next() {
-			n++
-		}
-		if err := rows.Err(); err != nil {
-			t.Fatal(err)
-		}
-		return n
+		return len(machines)
 	}
 
-	exec(t, sqlDB, draftQuery(t, "SoftDeleteUser"), bob)
-	exec(t, sqlDB, draftQuery(t, "DeleteSessionsByUser"), bob)
+	bobLeaves(t, q)
+	if err := q.DeleteSessionsByUser(t.Context(), bob); err != nil {
+		t.Fatal(err)
+	}
 
 	t.Run("lent parts stay, labeled as from a former member", func(t *testing.T) {
-		got := slotLabels(t, sqlDB, aliceMachine)
+		got := slotLabels(t, q, aliceMachine)
 		if got[0] != (slotLabel{"GPU", "bob", "former_member"}) {
 			t.Errorf("GPU slot = %+v", got[0])
 		}
@@ -482,6 +466,9 @@ func TestSoftDeletedUser(t *testing.T) {
 	t.Run("their machines drop out of listings", func(t *testing.T) {
 		if n := machineCount(); n != 2 {
 			t.Errorf("listed %d machines, want 2 (alice, carol)", n)
+		}
+		if _, err := q.GetMachine(t.Context(), 2); !errors.Is(err, sql.ErrNoRows) {
+			t.Errorf("GetMachine(bob-pc): err = %v, want sql.ErrNoRows", err)
 		}
 	})
 	t.Run("their data and sessions", func(t *testing.T) {
@@ -493,28 +480,38 @@ func TestSoftDeletedUser(t *testing.T) {
 		}
 	})
 	t.Run("logging in again restores them", func(t *testing.T) {
-		exec(t, sqlDB, draftQuery(t, "UpsertDiscordUser"), "200", "bob", nil, nil)
-		if n := count(t, sqlDB, `SELECT count(*) FROM users WHERE id = 2 AND deleted_at IS NULL`); n != 1 {
-			t.Fatal("Bob is still marked as left")
+		u, err := q.UpsertDiscordUser(t.Context(), db.UpsertDiscordUserParams{DiscordID: "200", Username: "bob"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if u.ID != bob || u.DeletedAt.Valid {
+			t.Fatalf("upsert returned %+v, want Bob restored", u)
 		}
 		if n := machineCount(); n != 3 {
 			t.Errorf("listed %d machines, want 3", n)
 		}
-		if got := slotLabels(t, sqlDB, aliceMachine)[0].source; got != "borrowed" {
+		if got := slotLabels(t, q, aliceMachine)[0].source; got != "borrowed" {
 			t.Errorf("GPU slot source = %q, want borrowed", got)
 		}
 	})
 }
 
 func TestDeleteMachineReturnsPartsToInventory(t *testing.T) {
-	sqlDB := newSeededDB(t)
+	sqlDB, q := newSeededDB(t)
 	exec(t, sqlDB, lendBobsGPUToAlice)
-	exec(t, sqlDB, `UPDATE parts SET slot_id = 2 WHERE id = 10`)
+	exec(t, sqlDB, installAliceCPU)
 	exec(t, sqlDB, `INSERT INTO racks (id, owner_id, name) VALUES (1, 1, 'lab')`)
 	exec(t, sqlDB, `INSERT INTO rack_mounts (rack_id, machine_id, position_u) VALUES (1, 1, 10)`)
 	exec(t, sqlDB, `INSERT INTO rack_mounts (rack_id, label, position_u) VALUES (1, 'patch panel', 42)`)
 
-	exec(t, sqlDB, `DELETE FROM machines WHERE id = 1`)
+	n, err := q.DeleteMachine(t.Context(), db.DeleteMachineParams{ID: aliceMachine, OwnerID: bob})
+	if err != nil || n != 0 {
+		t.Fatalf("Bob deleting Alice's machine: rows = %d, err = %v; want 0 rows", n, err)
+	}
+	n, err = q.DeleteMachine(t.Context(), db.DeleteMachineParams{ID: aliceMachine, OwnerID: alice})
+	if err != nil || n != 1 {
+		t.Fatalf("Alice deleting her machine: rows = %d, err = %v; want 1 row", n, err)
+	}
 
 	if n := count(t, sqlDB, `SELECT count(*) FROM parts WHERE id IN (10, 20) AND slot_id IS NULL`); n != 2 {
 		t.Errorf("%d of 2 parts back in inventory", n)
@@ -530,12 +527,29 @@ func TestDeleteMachineReturnsPartsToInventory(t *testing.T) {
 	}
 }
 
+func TestDeleteSlotReturnsPartToInventory(t *testing.T) {
+	sqlDB, q := newSeededDB(t)
+	exec(t, sqlDB, lendBobsGPUToAlice)
+
+	n, err := q.DeleteSlot(t.Context(), db.DeleteSlotParams{SlotID: aliceGPUSlot, UserID: bob})
+	if err != nil || n != 0 {
+		t.Fatalf("Bob deleting Alice's slot: rows = %d, err = %v; want 0 rows", n, err)
+	}
+	n, err = q.DeleteSlot(t.Context(), db.DeleteSlotParams{SlotID: aliceGPUSlot, UserID: alice})
+	if err != nil || n != 1 {
+		t.Fatalf("Alice deleting her slot: rows = %d, err = %v; want 1 row", n, err)
+	}
+	if n := count(t, sqlDB, `SELECT count(*) FROM parts WHERE id = 20 AND owner_id = 2 AND slot_id IS NULL`); n != 1 {
+		t.Error("Bob's GPU didn't go back to his inventory")
+	}
+}
+
 // TestPurgeUserRemovesTheirData covers the hard delete (see TestSoftDeletedUser
 // for the normal way a user leaves).
 func TestPurgeUserRemovesTheirData(t *testing.T) {
-	sqlDB := newSeededDB(t)
+	sqlDB, _ := newSeededDB(t)
 	exec(t, sqlDB, lendBobsGPUToAlice)
-	exec(t, sqlDB, `UPDATE parts SET slot_id = 2 WHERE id = 10`)
+	exec(t, sqlDB, installAliceCPU)
 	exec(t, sqlDB, `INSERT INTO sessions (token_hash, user_id, expires_at)
 		VALUES (x'00', 2, CURRENT_TIMESTAMP)`)
 

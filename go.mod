@@ -7,6 +7,7 @@ require (
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/pressly/goose/v3 v3.27.1
 	golang.org/x/net v0.57.0
+	golang.org/x/oauth2 v0.37.0
 	modernc.org/sqlite v1.53.0
 )
 

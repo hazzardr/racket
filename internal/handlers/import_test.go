@@ -13,30 +13,43 @@ import (
 	"strings"
 	"testing"
 
-	_ "modernc.org/sqlite"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/pressly/goose/v3"
-
 	"racket/internal/db"
 	"racket/internal/web"
 )
 
-func newImportTestRouter(t *testing.T) (*chi.Mux, *sql.DB) {
-	t.Helper()
-	sqlDB, err := sql.Open("sqlite", "file::memory:?_pragma=foreign_keys(1)")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := goose.Up(sqlDB, "../../migrations"); err != nil {
-		t.Fatal(err)
-	}
-	queries := db.New(sqlDB)
-	h := New(sqlDB, queries, newTestWeb(t))
+// postImport posts a multipart import form as cookie's user.
+func (app *testApp) postImport(
+	cookie *http.Cookie, fields map[string]string, csvData []byte,
+) *httptest.ResponseRecorder {
+	app.t.Helper()
+	body, ct := newMultipartBody(fields, "file", "parts.csv", csvData)
+	req := httptest.NewRequest(http.MethodPost, "/import", body)
+	req.Header.Set("Content-Type", ct)
+	req.AddCookie(cookie)
+	rr := httptest.NewRecorder()
+	app.router.ServeHTTP(rr, req)
+	return rr
+}
 
-	r := chi.NewRouter()
-	r.Post("/import", h.Import)
-	return r, sqlDB
+// ownedParts lists a user's parts.
+func (app *testApp) ownedParts(username string) []db.Part {
+	app.t.Helper()
+	parts, err := app.queries.ListPartsByOwner(app.t.Context(), app.user(username).ID)
+	if err != nil {
+		app.t.Fatal(err)
+	}
+	return parts
+}
+
+// slotContents maps each filled slot's category to its part names, in slot order.
+func slotContents(slots []db.ListSlotsByMachineRow) map[string][]string {
+	got := map[string][]string{}
+	for _, s := range slots {
+		if s.PartID.Valid {
+			got[s.Category] = append(got[s.Category], s.PartName.String)
+		}
+	}
+	return got
 }
 
 const (
@@ -156,15 +169,16 @@ func TestRowToCreateParams(t *testing.T) {
 		hasPrice: true,
 		merchant: "Amazon",
 	}
-	params := rowToCreateParams(row, sql.NullInt64{})
-	if params.Name != "Ryzen 7 5800X" {
-		t.Errorf("Name = %q, want %q", params.Name, "Ryzen 7 5800X")
+	slot := sql.NullInt64{Int64: 7, Valid: true}
+	params := rowToCreateParams(row, 3, slot, "wanted")
+	if params.Name != "Ryzen 7 5800X" || params.OwnerID != 3 || params.SlotID != slot || params.Status != "wanted" {
+		t.Errorf("params = %+v, want name, owner 3, slot 7, wanted", params)
 	}
 	if !params.Category.Valid || params.Category.String != cpu {
 		t.Errorf("Category = %+v, want Valid=true String=CPU", params.Category)
 	}
-	if !params.PurchasePrice.Valid || params.PurchasePrice.Float64 != 329.99 {
-		t.Errorf("PurchasePrice = %+v, want Valid=true Float64=329.99", params.PurchasePrice)
+	if !params.PriceCents.Valid || params.PriceCents.Int64 != 32999 {
+		t.Errorf("PriceCents = %+v, want 32999", params.PriceCents)
 	}
 	if !params.PurchasedFrom.Valid || params.PurchasedFrom.String != "Amazon" {
 		t.Errorf("PurchasedFrom = %+v, want Valid=true String=Amazon", params.PurchasedFrom)
@@ -187,104 +201,68 @@ func newMultipartBody(fields map[string]string, fileField, filename string, file
 }
 
 func TestImportCSV_Endpoint(t *testing.T) {
-	r, sqlDB := newImportTestRouter(t)
-	defer sqlDB.Close()
+	app := newTestApp(t)
+	alice := app.login("alice")
 
 	csvData := `Type,Item,Price,Merchant
 CPU,Ryzen 7 5800X,$329.99,Amazon
-GPU,RTX 3080,$599.99,Newegg
+Video Card,RTX 3080,$599.99,Newegg
 `
-	body, ct := newMultipartBody(map[string]string{"machine_name": "Test Build"}, "file", "parts.csv", []byte(csvData))
-
-	req := httptest.NewRequest(http.MethodPost, "/import", body)
-	req.Header.Set("Content-Type", ct)
-	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("expected 303, got %d body: %s", rr.Code, rr.Body.String())
-	}
+	rr := app.postImport(alice, map[string]string{"machine_name": "Test Build"}, []byte(csvData))
+	assertStatus(t, rr, http.StatusSeeOther)
 	loc := rr.Header().Get("Location")
 	if !strings.HasPrefix(loc, "/machines/") {
 		t.Fatalf("expected redirect to /machines/{id}, got %q", loc)
 	}
 
-	// Verify parts were created.
-	queries := db.New(sqlDB)
-	parts, err := queries.ListParts(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	parts := app.ownedParts("alice")
 	if len(parts) != 2 {
 		t.Fatalf("expected 2 parts, got %d", len(parts))
 	}
+	for _, p := range parts {
+		if p.Status != "owned" || !p.SlotID.Valid {
+			t.Errorf("part %q: status %q, in slot %v; want owned, in a slot", p.Name, p.Status, p.SlotID.Valid)
+		}
+	}
 }
 
+// Without a machine name, parts go to the viewer's inventory.
 func TestImportCSV_NoMachine(t *testing.T) {
-	r, sqlDB := newImportTestRouter(t)
-	defer sqlDB.Close()
+	app := newTestApp(t)
+	alice := app.login("alice")
 
-	csvData := `Type,Item,Price,Merchant
-CPU,Ryzen 7 5800X,$329.99,Amazon
-`
-	body, ct := newMultipartBody(nil, "file", "parts.csv", []byte(csvData))
-
-	req := httptest.NewRequest(http.MethodPost, "/import", body)
-	req.Header.Set("Content-Type", ct)
-	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("expected 303, got %d body: %s", rr.Code, rr.Body.String())
-	}
-	loc := rr.Header().Get("Location")
-	if loc != "/machines" {
+	csvData := "Type,Item,Price,Merchant\nCPU,Ryzen 7 5800X,$329.99,Amazon\n"
+	rr := app.postImport(alice, nil, []byte(csvData))
+	assertStatus(t, rr, http.StatusSeeOther)
+	if loc := rr.Header().Get("Location"); loc != "/machines" {
 		t.Fatalf("expected redirect to /machines, got %q", loc)
+	}
+	parts := app.ownedParts("alice")
+	if len(parts) != 1 || parts[0].SlotID.Valid {
+		t.Fatalf("parts = %+v, want one part outside any machine", parts)
 	}
 }
 
 func TestImportURL_InvalidURL(t *testing.T) {
-	r, sqlDB := newImportTestRouter(t)
-	defer sqlDB.Close()
+	app := newTestApp(t)
+	alice := app.login("alice")
 
-	tests := []struct {
-		urlVal string
-	}{
-		{"not-a-url"},
-		{"https://example.com/list/abc"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.urlVal, func(t *testing.T) {
-			body, ct := newMultipartBody(map[string]string{"pcpartpicker_url": tt.urlVal}, "", "", nil)
-
-			req := httptest.NewRequest(http.MethodPost, "/import", body)
-			req.Header.Set("Content-Type", ct)
-			rr := httptest.NewRecorder()
-			r.ServeHTTP(rr, req)
-			if rr.Code != http.StatusBadRequest {
-				t.Errorf("expected 400 for url=%q, got %d", tt.urlVal, rr.Code)
-			}
+	for _, urlVal := range []string{"not-a-url", "https://example.com/list/abc"} {
+		t.Run(urlVal, func(t *testing.T) {
+			rr := app.postImport(alice, map[string]string{"pcpartpicker_url": urlVal}, nil)
+			assertStatus(t, rr, http.StatusBadRequest)
 		})
 	}
 }
 
 // The URL import form posts urlencoded (no file field), not multipart.
 func TestImportURL_URLEncodedForm(t *testing.T) {
-	r, sqlDB := newImportTestRouter(t)
-	defer sqlDB.Close()
+	app := newTestApp(t)
+	alice := app.login("alice")
 
-	form := url.Values{"pcpartpicker_url": {"https://example.com/list/abc"}}
-	req := httptest.NewRequest(http.MethodPost, "/import", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rr.Code)
-	}
-	if !strings.Contains(rr.Body.String(), "Not a valid PCPartPicker list URL.") {
-		t.Fatalf("expected URL validation error, got: %s", rr.Body.String())
-	}
+	rr := app.post(alice, "/import", url.Values{"pcpartpicker_url": {"https://example.com/list/abc"}})
+	assertStatus(t, rr, http.StatusBadRequest)
+	assertContains(t, rr, "Not a valid PCPartPicker list URL.")
 }
 
 func TestPCPPListRegex(t *testing.T) {
@@ -458,11 +436,13 @@ func TestImportURL_BuildGuideHTMLFallback(t *testing.T) {
 	}
 }
 
+// Every page renders with its real data type and a signed-in user.
 func TestRenderTemplates(t *testing.T) {
 	w, err := web.New()
 	if err != nil {
 		t.Fatal(err)
 	}
+	user := &db.User{ID: 1, Username: "alice"}
 
 	pages := []struct {
 		name string
@@ -471,74 +451,114 @@ func TestRenderTemplates(t *testing.T) {
 		{"error.html", struct{ Message string }{Message: "test error"}},
 		{"import.html", importPage{}},
 		{"landing.html", nil},
-		{"machines.html", []machineRow{}},
-		{"new_machine.html", newMachinePage{}},
-		{"machine_detail.html", MachinePage{Slots: []slotCard{}, Cats: []string{}}},
+		{"login.html", loginPage{Discord: true, DevLogin: true}},
+		{"machines.html", machinesPage{}},
+		{"new_machine.html", newMachinePage{Kinds: machineKinds, Statuses: machineStatuses}},
+		{"machine_detail.html", MachinePage{IsOwner: true, Slots: []slotCard{{CanEdit: true}}, Cats: commonSlots}},
 	}
 
 	for _, p := range pages {
 		t.Run(p.name, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			w.Render(rr, 200, p.name, p.data)
-			if rr.Code != http.StatusOK {
-				t.Fatalf("template %s: expected 200, got %d", p.name, rr.Code)
-			}
-			body := rr.Body.String()
-			if !strings.Contains(body, "<!doctype html>") || !strings.Contains(body, "</html>") {
-				n := 100
-				if len(body) < n {
-					n = len(body)
-				}
-				t.Errorf("template %s rendered an incomplete page, got: %s", p.name, body[:n])
-			}
+			w.Render(rr, http.StatusOK, p.name, web.Page{User: user, Data: p.data})
+			assertStatus(t, rr, http.StatusOK)
+			assertContains(t, rr, "<!doctype html>", "</html>", `<span class="nav-user">alice</span>`)
 		})
 	}
 }
 
-// Naming an existing machine attaches the imported parts to it.
+// Naming one of your machines imports into it; a taken slot gets a sibling.
 func TestImportCSV_ExistingMachine(t *testing.T) {
-	r, sqlDB := newImportTestRouter(t)
-	defer sqlDB.Close()
+	app := newTestApp(t)
+	alice := app.login("alice")
 
 	csvData := []byte("Type,Item,Price,Merchant\nCPU,Ryzen 7 5800X,$329.99,Amazon\n")
 	var locs []string
 	for range 2 {
-		body, ct := newMultipartBody(map[string]string{"machine_name": "Test Build"}, "file", "parts.csv", csvData)
-		req := httptest.NewRequest(http.MethodPost, "/import", body)
-		req.Header.Set("Content-Type", ct)
-		rr := httptest.NewRecorder()
-		r.ServeHTTP(rr, req)
-		if rr.Code != http.StatusSeeOther {
-			t.Fatalf("expected 303, got %d body: %s", rr.Code, rr.Body.String())
-		}
+		rr := app.postImport(alice, map[string]string{"machine_name": "Test Build"}, csvData)
+		assertStatus(t, rr, http.StatusSeeOther)
 		locs = append(locs, rr.Header().Get("Location"))
 	}
 	if locs[0] != locs[1] {
 		t.Fatalf("expected both imports to redirect to the same machine, got %q and %q", locs[0], locs[1])
 	}
 
-	queries := db.New(sqlDB)
-	machines, err := queries.ListMachines(context.Background())
+	machines, err := app.queries.ListMachines(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(machines) != 1 {
 		t.Fatalf("expected 1 machine, got %d", len(machines))
 	}
-	parts, err := queries.ListPartsByMachine(context.Background(), sql.NullInt64{Int64: machines[0].ID, Valid: true})
+	slots := app.slots(machines[0].Machine.ID)
+	// Default slots are seeded once; the second CPU needed a new CPU slot.
+	if len(slots) != len(defaultSlots)+1 {
+		t.Fatalf("expected %d slots, got %d", len(defaultSlots)+1, len(slots))
+	}
+	if got := slotContents(slots)["CPU"]; len(got) != 2 {
+		t.Fatalf("CPU slots hold %v, want both CPUs", got)
+	}
+}
+
+// Another user's machine with the same name isn't touched.
+func TestImportCSV_MachineNamesArePerUser(t *testing.T) {
+	app := newTestApp(t)
+	alice, bob := app.login("alice"), app.login("bob")
+	bobsID := app.createMachine(bob, "Test Build")
+
+	csvData := []byte("Type,Item\nCPU,Ryzen 7 5800X\n")
+	rr := app.postImport(alice, map[string]string{"machine_name": "Test Build"}, csvData)
+	assertStatus(t, rr, http.StatusSeeOther)
+	if loc := rr.Header().Get("Location"); loc == machinePath(bobsID, "") {
+		t.Fatal("import went into Bob's machine")
+	}
+	if got := slotContents(app.slots(bobsID)); len(got) != 0 {
+		t.Errorf("Bob's machine gained parts: %v", got)
+	}
+}
+
+func TestImportPlacesPartsInSlots(t *testing.T) {
+	app := newTestApp(t)
+	alice := app.login("alice")
+
+	csvData := `Type,Item,Price
+CPU,Ryzen 7 5800X,$329.99
+Memory,32GB DDR4 kit A,$60.00
+Memory,32GB DDR4 kit B,$60.00
+Memory,32GB DDR4 kit C,$60.00
+Video Card,RTX 3080,$599.99
+Power Supply,RM850x,$120.00
+Case Fan,P12 5-pack,$30.00
+,Mystery part,
+`
+	rr := app.postImport(alice, map[string]string{"machine_name": "Build", "wanted": "on"}, []byte(csvData))
+	assertStatus(t, rr, http.StatusSeeOther)
+
+	machines, err := app.queries.ListMachines(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(parts) != 2 {
-		t.Fatalf("expected 2 parts on the machine, got %d", len(parts))
+	got := slotContents(app.slots(machines[0].Machine.ID))
+	want := map[string][]string{
+		"CPU":      {"Ryzen 7 5800X"},
+		"RAM":      {"32GB DDR4 kit A", "32GB DDR4 kit B", "32GB DDR4 kit C"},
+		"GPU":      {"RTX 3080"},
+		"PSU":      {"RM850x"},
+		"Case Fan": {"P12 5-pack"},
+		"Other":    {"Mystery part"},
 	}
-	// Default slots are seeded once, not again on the second import.
-	slots, err := queries.ListSlotsByMachine(context.Background(), machines[0].ID)
-	if err != nil {
-		t.Fatal(err)
+	for category, names := range want {
+		if strings.Join(got[category], "|") != strings.Join(names, "|") {
+			t.Errorf("%s slots = %v, want %v", category, got[category], names)
+		}
 	}
-	if len(slots) != len(defaultSlots) {
-		t.Fatalf("expected %d slots, got %d", len(defaultSlots), len(slots))
+	for _, p := range app.ownedParts("alice") {
+		if p.Status != "wanted" {
+			t.Errorf("part %q status = %q, want wanted", p.Name, p.Status)
+		}
+	}
+	if machines[0].PartsTotalCents != 32999+3*6000+59999+12000+3000 {
+		t.Errorf("machine total = %d cents", machines[0].PartsTotalCents)
 	}
 }
 
@@ -573,25 +593,15 @@ func TestImportURL_CSVExport(t *testing.T) {
 		requested = append(requested, r.URL.String())
 		return textResponse(r, http.StatusOK, "Type,Item,Price\nCPU,Ryzen 7 5800X,$329.99\n", nil), nil
 	})
-	r, sqlDB := newImportTestRouter(t)
-	defer sqlDB.Close()
+	app := newTestApp(t)
+	alice := app.login("alice")
 
 	form := url.Values{"pcpartpicker_url": {"https://pcpartpicker.com/list/abc123"}, "machine_name": {"From URL"}}
-	req := httptest.NewRequest(http.MethodPost, "/import", strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rr := httptest.NewRecorder()
-	r.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusSeeOther {
-		t.Fatalf("expected 303, got %d body: %s", rr.Code, rr.Body.String())
-	}
+	assertStatus(t, app.post(alice, "/import", form), http.StatusSeeOther)
 	if len(requested) != 1 || requested[0] != "https://pcpartpicker.com/list/abc123/export" {
 		t.Fatalf("expected one request to the export URL, got %v", requested)
 	}
-	parts, err := db.New(sqlDB).ListParts(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	parts := app.ownedParts("alice")
 	if len(parts) != 1 || parts[0].Name != "Ryzen 7 5800X" {
 		t.Fatalf("expected the exported part to be imported, got %+v", parts)
 	}

@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"racket/internal/db"
 )
 
 //go:embed all:templates
@@ -21,6 +23,24 @@ var staticFS embed.FS
 // ponytail: one template set, named blocks; no per-page render struct
 type Web struct {
 	tmpl *template.Template
+}
+
+// Page is the data every full page renders with: the signed-in user (nil
+// when signed out) for the header, and the page's own data.
+type Page struct {
+	User *db.User
+	Data any
+}
+
+var funcs = template.FuncMap{
+	// money formats cents as a decimal amount: 123456 -> "1234.56".
+	"money": func(cents int64) string {
+		sign := ""
+		if cents < 0 {
+			sign, cents = "-", -cents
+		}
+		return fmt.Sprintf("%s%d.%02d", sign, cents/100, cents%100)
+	},
 }
 
 func New() (*Web, error) {
@@ -39,7 +59,7 @@ func New() (*Web, error) {
 	}
 
 	// Template names default to the base filename (layout.html, landing.html, ...).
-	tmpl, err := template.ParseFS(templateFS, files...)
+	tmpl, err := template.New("").Funcs(funcs).ParseFS(templateFS, files...)
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}

@@ -1,29 +1,42 @@
 {{define "slot_card"}}
-<div class="card slot-card" id="slot-{{.ID}}">
+<div class="card slot-card slot-{{.PartSource}}" id="slot-{{.ID}}">
   <div class="slot-header">
     <h3 class="slot-category">{{.Category}}</h3>
+    {{if .CanEdit}}
     <form method="post" action="/slots/{{.ID}}/delete" class="inline-form"
           hx-post="/slots/{{.ID}}/delete" hx-target="#slot-{{.ID}}" hx-swap="delete">
       <button type="submit" class="btn-remove-slot" title="Remove slot">&times;</button>
     </form>
+    {{end}}
   </div>
   {{if .PartID.Valid}}
   <div class="slot-part">
     <span class="part-name">{{.PartName.String}}</span>
     {{if .PartModel.Valid}}<span class="part-model">{{.PartModel.String}}</span>{{end}}
+    {{if .PartPriceCents.Valid}}<span class="part-price">${{money .PartPriceCents.Int64}}</span>{{end}}
+    {{if eq .PartSource "borrowed"}}<span class="part-badge badge-borrowed">from {{.PartOwnerName.String}}</span>
+    {{- else if eq .PartSource "former_member"}}<span class="part-badge badge-former">from a former member</span>
+    {{- else if eq .PartSource "unpurchased"}}<span class="part-badge badge-unpurchased">not bought yet</span>
+    {{- end}}
+    {{if .RemoveLabel}}
     <form method="post" action="/slots/{{.ID}}/part/delete" class="inline-form"
           hx-post="/slots/{{.ID}}/part/delete" hx-target="#slot-{{.ID}}" hx-swap="outerHTML">
-      <button type="submit" class="btn btn-small">Remove</button>
+      <button type="submit" class="btn btn-small">{{.RemoveLabel}}</button>
     </form>
+    {{end}}
   </div>
-  {{else}}
+  {{else if .CanEdit}}
   <form class="slot-form" method="post" action="/slots/{{.ID}}/part"
         hx-post="/slots/{{.ID}}/part" hx-target="#slot-{{.ID}}" hx-swap="outerHTML">
     <input name="name" type="text" placeholder="Part name" required>
     <input name="manufacturer" type="text" placeholder="Manufacturer">
     <input name="model" type="text" placeholder="Model">
+    <input name="price" type="text" placeholder="Price" inputmode="decimal">
+    <label class="checkbox"><input name="wanted" type="checkbox"> Not bought yet</label>
     <button type="submit" class="btn btn-small">Add</button>
   </form>
+  {{else}}
+  <p class="meta">Empty</p>
   {{end}}
   {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 </div>

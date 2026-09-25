@@ -6,10 +6,14 @@ golangci-lint = "2.12.2"
 goreleaser = "2.6.1"
 lefthook = "latest"
 
+[env]
+# Local settings (Discord credentials, etc.); see .env.example. Optional.
+_.file = ".env"
+
 [tasks]
 start = { run = "./bin/racket", depends = ["build"], description = "build and run the server on port 8080" }
 
-dev = { run = "go run ./cmd/server", description = "run the server for development" }
+dev = { run = "go run ./cmd/server", env = { RACKET_DEV_LOGIN = "1" }, description = "run the server with dev login" }
 
 build = { run = "go build -ldflags='-s' -o=./bin/racket ./cmd/server", description = "build local binary" }
 

@@ -1,9 +1,10 @@
 {{template "page_top" .}}
+{{with .Data}}
 <section>
   <h2 class="section-title">Import parts</h2>
   <p class="lead">
-    Import from PCPartPicker as a new machine, or attach it to an existing one
-      by filling in its name.
+    Import from PCPartPicker into a new machine, or into one of yours by
+      filling in its name. Each part goes into a slot of its type.
   </p>
   {{if .Error}}<div class="status error">{{.Error}}</div>{{end}}
   <div class="import-grid">
@@ -21,6 +22,10 @@
           Machine name (optional)
           <input name="machine_name" type="text" value="{{.MachineName}}">
         </label>
+        <label class="checkbox">
+          <input name="wanted" type="checkbox"{{if .Wanted}} checked{{end}}>
+          Not bought yet (a planned build)
+        </label>
         <div class="form-actions">
           <button type="submit" class="btn">Import from URL</button>
         </div>
@@ -37,6 +42,10 @@
           Machine name (optional)
           <input name="machine_name" type="text" value="{{.MachineName}}">
         </label>
+        <label class="checkbox">
+          <input name="wanted" type="checkbox"{{if .Wanted}} checked{{end}}>
+          Not bought yet (a planned build)
+        </label>
         <div class="form-actions">
           <button type="submit" class="btn">Import CSV</button>
         </div>
@@ -44,4 +53,5 @@
     </div>
   </div>
 </section>
+{{end}}
 {{template "page_bottom" .}}

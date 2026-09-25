@@ -8,7 +8,7 @@
       is in which box.
   </p>
   <p class="cta">
-    <a href="/machines" class="btn">Enter</a>
+    {{if .User}}<a href="/machines" class="btn">Your machines</a>{{else}}<a href="/login" class="btn">Log in</a>{{end}}
   </p>
   <div class="feature-grid">
     <div class="feature-card">
@@ -34,5 +34,5 @@
     </div>
   </div>
 </section>
-<p class="discreet"><a href="/import">Import from PCPartPicker</a></p>
+{{if .User}}<p class="discreet"><a href="/import">Import from PCPartPicker</a></p>{{end}}
 {{template "page_bottom" .}}

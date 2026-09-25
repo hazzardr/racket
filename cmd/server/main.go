@@ -7,15 +7,16 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/log"
-	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/pressly/goose/v3"
 
+	"racket/internal/auth"
 	"racket/internal/db"
 	"racket/internal/handlers"
 	"racket/internal/web"
@@ -45,6 +46,80 @@ func main() {
 	}
 }
 
+// Environment variables for Discord sign-in.
+const (
+	envDiscordClientID     = "RACKET_DISCORD_CLIENT_ID"
+	envDiscordClientSecret = "RACKET_DISCORD_CLIENT_SECRET"
+	envDiscordGuildID      = "RACKET_DISCORD_GUILD_ID"
+)
+
+const schemeHTTPS = "https"
+
+// config is the server configuration, read from the environment.
+type config struct {
+	dbPath  string
+	port    string
+	baseURL *url.URL
+	// discord is nil when Discord sign-in isn't configured.
+	discord  *auth.DiscordConfig
+	devLogin bool
+}
+
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// loadConfig reads the configuration. At least one way to sign in must be
+// set up: Discord, or dev login for local development.
+func loadConfig() (config, error) {
+	cfg := config{
+		dbPath:   getenv("RACKET_DB", "racket.db"),
+		port:     getenv("PORT", "8080"),
+		devLogin: os.Getenv("RACKET_DEV_LOGIN") == "1",
+	}
+
+	rawBase := strings.TrimSuffix(getenv("RACKET_BASE_URL", "http://localhost:"+cfg.port), "/")
+	base, err := url.Parse(rawBase)
+	if err != nil || (base.Scheme != "http" && base.Scheme != schemeHTTPS) || base.Host == "" {
+		return config{}, fmt.Errorf("RACKET_BASE_URL must be an http(s) URL like https://racket.example.com, got %q", rawBase)
+	}
+	cfg.baseURL = base
+
+	discordVars := []string{envDiscordClientID, envDiscordClientSecret, envDiscordGuildID}
+	var missing []string
+	for _, key := range discordVars {
+		if os.Getenv(key) == "" {
+			missing = append(missing, key)
+		}
+	}
+	switch len(missing) {
+	case 0:
+		cfg.discord = &auth.DiscordConfig{
+			ClientID:     os.Getenv(envDiscordClientID),
+			ClientSecret: os.Getenv(envDiscordClientSecret),
+			GuildID:      os.Getenv(envDiscordGuildID),
+			RedirectURL:  rawBase + "/auth/discord/callback",
+		}
+	case len(discordVars):
+	default:
+		return config{}, fmt.Errorf("partly configured Discord sign-in: also set %s", strings.Join(missing, ", "))
+	}
+
+	if cfg.devLogin && base.Scheme == schemeHTTPS {
+		return config{}, errors.New("RACKET_DEV_LOGIN lets anyone sign in as anyone, " +
+			"so it's refused when RACKET_BASE_URL is https (a real deployment)")
+	}
+	if cfg.discord == nil && !cfg.devLogin {
+		return config{}, errors.New("no way to sign in: set RACKET_DISCORD_CLIENT_ID, " +
+			"RACKET_DISCORD_CLIENT_SECRET, and RACKET_DISCORD_GUILD_ID, " +
+			"or RACKET_DEV_LOGIN=1 for local development")
+	}
+	return cfg, nil
+}
+
 // sqliteDSN turns a plain path into a file: URI with foreign key enforcement
 // and a busy timeout. SQLite defaults PRAGMA foreign_keys to off, which would
 // silently disable the schema's ON DELETE CASCADE/SET NULL clauses. Without
@@ -62,12 +137,12 @@ func sqliteDSN(path string) string {
 }
 
 func run() error {
-	dsn := os.Getenv("RACKET_DB")
-	if dsn == "" {
-		dsn = "racket.db"
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
 	}
 
-	sqlDB, err := sql.Open("sqlite", sqliteDSN(dsn))
+	sqlDB, err := sql.Open("sqlite", sqliteDSN(cfg.dbPath))
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}
@@ -81,59 +156,44 @@ func run() error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 
-	queries := db.New(sqlDB)
-
 	webUI, err := web.New()
 	if err != nil {
 		return fmt.Errorf("init web: %w", err)
 	}
-	h := handlers.New(sqlDB, queries, webUI)
-
-	r := newRouter(h, webUI)
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	h := newHandler(sqlDB, webUI, cfg)
+	if cfg.devLogin {
+		slog.Warn("dev login is on: anyone can sign in as anyone. Never expose this server.")
+	}
+	if cfg.discord != nil {
+		slog.Info("Discord sign-in is on", "redirect_url", cfg.discord.RedirectURL)
 	}
 
 	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      r,
+		Addr:         ":" + cfg.port,
+		Handler:      middleware.Logger(h.Routes()),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
-	slog.Info("racket listening", "addr", "http://localhost:"+port)
+	slog.Info("racket listening", "addr", "http://localhost:"+cfg.port, "base_url", cfg.baseURL.String())
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil
 }
 
-// newRouter wires the middleware stack and routes.
-func newRouter(h *handlers.Handler, webUI *web.Web) http.Handler {
-	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	// Reject cross-site state-changing requests (CSRF) using the browser's
-	// Sec-Fetch-Site and Origin headers. GET/HEAD/OPTIONS pass through.
-	r.Use(http.NewCrossOriginProtection().Handler)
-
-	r.Get("/", h.Landing)
-	r.Get("/machines", h.MachinesPage)
-	r.Get("/machines/new", h.NewMachinePage)
-	r.Post("/machines", h.CreateMachine)
-	r.Get("/machines/{id}", h.MachineDetailPage)
-	r.Post("/machines/{id}/delete", h.DeleteMachine)
-	r.Post("/machines/{id}/slots", h.CreateSlot)
-	r.Post("/slots/{id}/part", h.AssignPart)
-	r.Post("/slots/{id}/part/delete", h.UnassignPart)
-	r.Post("/slots/{id}/delete", h.DeleteSlot)
-	r.Post("/parts/{id}/delete", h.DeletePart)
-	r.Get("/import", h.ImportPage)
-	r.Post("/import", h.Import)
-
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServerFS(webUI.Static())))
-	return r
+// newHandler wires the handlers to the database, templates, and sign-in.
+func newHandler(sqlDB *sql.DB, webUI *web.Web, cfg config) *handlers.Handler {
+	queries := db.New(sqlDB)
+	secure := cfg.baseURL.Scheme == schemeHTTPS
+	a := handlers.Auth{
+		Sessions:      auth.NewSessions(queries, secure),
+		DevLogin:      cfg.devLogin,
+		SecureCookies: secure,
+	}
+	if cfg.discord != nil {
+		a.Discord = auth.NewDiscord(*cfg.discord)
+	}
+	return handlers.New(sqlDB, queries, webUI, a)
 }
