@@ -12,7 +12,7 @@ func (h *Handler) DeletePart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.queries.DeletePart(r.Context(), id); err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusOK)

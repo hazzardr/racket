@@ -190,6 +190,27 @@ func (q *Queries) GetMachine(ctx context.Context, id int64) (Machine, error) {
 	return i, err
 }
 
+const getMachineByName = `-- name: GetMachineByName :one
+SELECT id, name, description, location, built_on, purchased_on, created_at, updated_at FROM machines
+WHERE name = ?
+`
+
+func (q *Queries) GetMachineByName(ctx context.Context, name string) (Machine, error) {
+	row := q.db.QueryRowContext(ctx, getMachineByName, name)
+	var i Machine
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.Location,
+		&i.BuiltOn,
+		&i.PurchasedOn,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getPart = `-- name: GetPart :one
 SELECT id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at, slot_id FROM parts
 WHERE id = ?

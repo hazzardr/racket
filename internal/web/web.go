@@ -2,6 +2,7 @@
 package web
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"html/template"
@@ -45,14 +46,19 @@ func New() (*Web, error) {
 	return &Web{tmpl: tmpl}, nil
 }
 
-// Render executes a full page template (layout + content block).
+// Render executes a full page template (layout + content block). The template
+// is executed into a buffer first so a failure yields a 500 instead of a
+// truncated page with the caller's status.
 func (w *Web) Render(rw http.ResponseWriter, status int, name string, data any) {
+	var buf bytes.Buffer
+	if err := w.tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+		slog.Error("render template", "template", name, "error", err)
+		http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
 	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
 	rw.WriteHeader(status)
-	if err := w.tmpl.ExecuteTemplate(rw, name, data); err != nil {
-		// ponytail: headers already sent; log is all we can do here
-		slog.Error("render template", "template", name, "error", err)
-	}
+	_, _ = buf.WriteTo(rw)
 }
 
 // Fragment executes a partial template (no layout) for htmx swaps.

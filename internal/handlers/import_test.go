@@ -5,9 +5,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
-	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -17,15 +19,13 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"racket/internal/db"
+	"racket/internal/web"
 )
 
 func newImportTestRouter(t *testing.T) (*chi.Mux, *sql.DB) {
 	t.Helper()
 	sqlDB, err := sql.Open("sqlite", "file::memory:?_pragma=foreign_keys(1)")
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := goose.SetDialect("sqlite3"); err != nil {
 		t.Fatal(err)
 	}
 	if err := goose.Up(sqlDB, "../../migrations"); err != nil {
@@ -132,7 +132,6 @@ GPU,RTX 3080,$599.99,Amazon
 }
 
 func TestParseCSVToRows_NameColumn(t *testing.T) {
-	// Test with "Name" column instead of "Item".
 	csvData := `Type,Name,Price,Merchant
 CPU,Ryzen 7 5800X,$329.99,Amazon
 `
@@ -172,6 +171,21 @@ func TestRowToCreateParams(t *testing.T) {
 	}
 }
 
+// newMultipartBody builds a multipart form body with the given fields.
+func newMultipartBody(fields map[string]string, fileField, filename string, fileData []byte) (*bytes.Buffer, string) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	for k, v := range fields {
+		w.WriteField(k, v)
+	}
+	if fileData != nil {
+		fw, _ := w.CreateFormFile(fileField, filename)
+		fw.Write(fileData)
+	}
+	w.Close()
+	return &buf, w.FormDataContentType()
+}
+
 func TestImportCSV_Endpoint(t *testing.T) {
 	r, sqlDB := newImportTestRouter(t)
 	defer sqlDB.Close()
@@ -180,23 +194,19 @@ func TestImportCSV_Endpoint(t *testing.T) {
 CPU,Ryzen 7 5800X,$329.99,Amazon
 GPU,RTX 3080,$599.99,Newegg
 `
-	var buf bytes.Buffer
-	mw := newMPWriter(&buf, "form-boundary")
-	mw.writeField("file", "parts.csv", []byte(csvData))
-	mw.close()
+	body, ct := newMultipartBody(map[string]string{"machine_name": "Test Build"}, "file", "parts.csv", []byte(csvData))
 
-	req := httptest.NewRequest(http.MethodPost, "/import", &buf)
-	req.Header.Set("Content-Type", "multipart/form-data; boundary=form-boundary")
+	req := httptest.NewRequest(http.MethodPost, "/import", body)
+	req.Header.Set("Content-Type", ct)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
-	// Redirect to /machines (no machine created).
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d body: %s", rr.Code, rr.Body.String())
 	}
-	location := rr.Header().Get("Location")
-	if location != "/machines" {
-		t.Errorf("Location = %q, want %q", location, "/machines")
+	loc := rr.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/machines/") {
+		t.Fatalf("expected redirect to /machines/{id}, got %q", loc)
 	}
 
 	// Verify parts were created.
@@ -210,88 +220,70 @@ GPU,RTX 3080,$599.99,Newegg
 	}
 }
 
-func TestImportCSV_WithMachineName(t *testing.T) {
+func TestImportCSV_NoMachine(t *testing.T) {
 	r, sqlDB := newImportTestRouter(t)
 	defer sqlDB.Close()
 
 	csvData := `Type,Item,Price,Merchant
 CPU,Ryzen 7 5800X,$329.99,Amazon
 `
-	var buf bytes.Buffer
-	mw := newMPWriter(&buf, "form-boundary")
-	mw.writeField("file", "parts.csv", []byte(csvData))
-	mw.writeField("machine_name", "", []byte("Test Machine"))
-	mw.close()
+	body, ct := newMultipartBody(nil, "file", "parts.csv", []byte(csvData))
 
-	req := httptest.NewRequest(http.MethodPost, "/import", &buf)
-	req.Header.Set("Content-Type", "multipart/form-data; boundary=form-boundary")
+	req := httptest.NewRequest(http.MethodPost, "/import", body)
+	req.Header.Set("Content-Type", ct)
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("expected 303, got %d body: %s", rr.Code, rr.Body.String())
 	}
-	location := rr.Header().Get("Location")
-	if location != "/machines/1" {
-		t.Errorf("Location = %q, want %q", location, "/machines/1")
-	}
-
-	// Verify machine was created.
-	queries := db.New(sqlDB)
-	machine, err := queries.GetMachine(context.Background(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if machine.Name != "Test Machine" {
-		t.Errorf("machine name = %q, want %q", machine.Name, "Test Machine")
-	}
-
-	// Verify part was associated with the machine.
-	parts, err := queries.ListPartsByMachine(context.Background(), sql.NullInt64{Int64: 1, Valid: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(parts) != 1 {
-		t.Fatalf("expected 1 part, got %d", len(parts))
+	loc := rr.Header().Get("Location")
+	if loc != "/machines" {
+		t.Fatalf("expected redirect to /machines, got %q", loc)
 	}
 }
 
-func TestImport_NoURLNoFile(t *testing.T) {
+func TestImportURL_InvalidURL(t *testing.T) {
 	r, sqlDB := newImportTestRouter(t)
 	defer sqlDB.Close()
 
-	req := httptest.NewRequest(http.MethodPost, "/import", strings.NewReader(""))
+	tests := []struct {
+		urlVal string
+	}{
+		{"not-a-url"},
+		{"https://example.com/list/abc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.urlVal, func(t *testing.T) {
+			body, ct := newMultipartBody(map[string]string{"pcpartpicker_url": tt.urlVal}, "", "", nil)
+
+			req := httptest.NewRequest(http.MethodPost, "/import", body)
+			req.Header.Set("Content-Type", ct)
+			rr := httptest.NewRecorder()
+			r.ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("expected 400 for url=%q, got %d", tt.urlVal, rr.Code)
+			}
+		})
+	}
+}
+
+// The URL import form posts urlencoded (no file field), not multipart.
+func TestImportURL_URLEncodedForm(t *testing.T) {
+	r, sqlDB := newImportTestRouter(t)
+	defer sqlDB.Close()
+
+	form := url.Values{"pcpartpicker_url": {"https://example.com/list/abc"}}
+	req := httptest.NewRequest(http.MethodPost, "/import", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 	r.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("expected 422, got %d body: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rr.Code)
 	}
-	if !strings.Contains(rr.Body.String(), "Provide a PCPartPicker URL or a CSV file") {
-		t.Errorf("body missing error message: %s", rr.Body.String())
-	}
-}
-
-func TestImport_InvalidURL(t *testing.T) {
-	r, sqlDB := newImportTestRouter(t)
-	defer sqlDB.Close()
-
-	tests := []string{
-		"not-a-url",
-		"https://example.com/list/abc",
-	}
-	for _, urlVal := range tests {
-		t.Run(urlVal, func(t *testing.T) {
-			body := fmt.Sprintf("pcpartpicker_url=%s", urlVal)
-			req := httptest.NewRequest(http.MethodPost, "/import", strings.NewReader(body))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			rr := httptest.NewRecorder()
-			r.ServeHTTP(rr, req)
-			if rr.Code != http.StatusUnprocessableEntity {
-				t.Errorf("expected 422 for url=%q, got %d", urlVal, rr.Code)
-			}
-		})
+	if !strings.Contains(rr.Body.String(), "Not a valid PCPartPicker list URL.") {
+		t.Fatalf("expected URL validation error, got: %s", rr.Body.String())
 	}
 }
 
@@ -325,37 +317,6 @@ func TestPCPPListRegex(t *testing.T) {
 			}
 		})
 	}
-}
-
-// mpWriter builds a minimal multipart form body.
-type mpWriter struct {
-	w        *bytes.Buffer
-	boundary string
-	first    bool
-}
-
-func newMPWriter(w *bytes.Buffer, boundary string) *mpWriter {
-	return &mpWriter{w: w, boundary: boundary, first: true}
-}
-
-func (m *mpWriter) writeField(name, filename string, data []byte) {
-	if !m.first {
-		m.w.WriteString("\r\n")
-	}
-	m.first = false
-	if filename != "" {
-		m.w.WriteString("--" + m.boundary + "\r\n")
-		fmt.Fprintf(m.w, "Content-Disposition: form-data; name=%q; filename=%q\r\n", name, filename)
-		m.w.WriteString("Content-Type: text/csv\r\n\r\n")
-	} else {
-		m.w.WriteString("--" + m.boundary + "\r\n")
-		fmt.Fprintf(m.w, "Content-Disposition: form-data; name=%q\r\n\r\n", name)
-	}
-	m.w.Write(data)
-}
-
-func (m *mpWriter) close() {
-	m.w.WriteString("\r\n--" + m.boundary + "--\r\n")
 }
 
 func TestParsePartlistHTML(t *testing.T) {
@@ -494,5 +455,194 @@ func TestImportURL_BuildGuideHTMLFallback(t *testing.T) {
 	}
 	if rows[0].price != 150.00 {
 		t.Errorf("price = %v, want %v", rows[0].price, 150.00)
+	}
+}
+
+func TestRenderTemplates(t *testing.T) {
+	w, err := web.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pages := []struct {
+		name string
+		data any
+	}{
+		{"error.html", struct{ Message string }{Message: "test error"}},
+		{"import.html", importPage{}},
+		{"landing.html", nil},
+		{"machines.html", []machineRow{}},
+		{"new_machine.html", newMachinePage{}},
+		{"machine_detail.html", MachinePage{Slots: []slotCard{}, Cats: []string{}}},
+	}
+
+	for _, p := range pages {
+		t.Run(p.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			w.Render(rr, 200, p.name, p.data)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("template %s: expected 200, got %d", p.name, rr.Code)
+			}
+			body := rr.Body.String()
+			if !strings.Contains(body, "<!doctype html>") || !strings.Contains(body, "</html>") {
+				n := 100
+				if len(body) < n {
+					n = len(body)
+				}
+				t.Errorf("template %s rendered an incomplete page, got: %s", p.name, body[:n])
+			}
+		})
+	}
+}
+
+// Naming an existing machine attaches the imported parts to it.
+func TestImportCSV_ExistingMachine(t *testing.T) {
+	r, sqlDB := newImportTestRouter(t)
+	defer sqlDB.Close()
+
+	csvData := []byte("Type,Item,Price,Merchant\nCPU,Ryzen 7 5800X,$329.99,Amazon\n")
+	var locs []string
+	for range 2 {
+		body, ct := newMultipartBody(map[string]string{"machine_name": "Test Build"}, "file", "parts.csv", csvData)
+		req := httptest.NewRequest(http.MethodPost, "/import", body)
+		req.Header.Set("Content-Type", ct)
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("expected 303, got %d body: %s", rr.Code, rr.Body.String())
+		}
+		locs = append(locs, rr.Header().Get("Location"))
+	}
+	if locs[0] != locs[1] {
+		t.Fatalf("expected both imports to redirect to the same machine, got %q and %q", locs[0], locs[1])
+	}
+
+	queries := db.New(sqlDB)
+	machines, err := queries.ListMachines(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(machines) != 1 {
+		t.Fatalf("expected 1 machine, got %d", len(machines))
+	}
+	parts, err := queries.ListPartsByMachine(context.Background(), sql.NullInt64{Int64: machines[0].ID, Valid: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts on the machine, got %d", len(parts))
+	}
+	// Default slots are seeded once, not again on the second import.
+	slots, err := queries.ListSlotsByMachine(context.Background(), machines[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != len(defaultSlots) {
+		t.Fatalf("expected %d slots, got %d", len(defaultSlots), len(slots))
+	}
+}
+
+// roundTripFunc lets tests stand in for PCPartPicker without network access.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// fakePCPP routes pcppClient through fn for the duration of the test.
+func fakePCPP(t *testing.T, fn roundTripFunc) {
+	t.Helper()
+	orig := pcppClient.Transport
+	pcppClient.Transport = fn
+	t.Cleanup(func() { pcppClient.Transport = orig })
+}
+
+func textResponse(r *http.Request, status int, body string, header http.Header) *http.Response {
+	if header == nil {
+		header = http.Header{}
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     header,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    r,
+	}
+}
+
+func TestImportURL_CSVExport(t *testing.T) {
+	var requested []string
+	fakePCPP(t, func(r *http.Request) (*http.Response, error) {
+		requested = append(requested, r.URL.String())
+		return textResponse(r, http.StatusOK, "Type,Item,Price\nCPU,Ryzen 7 5800X,$329.99\n", nil), nil
+	})
+	r, sqlDB := newImportTestRouter(t)
+	defer sqlDB.Close()
+
+	form := url.Values{"pcpartpicker_url": {"https://pcpartpicker.com/list/abc123"}, "machine_name": {"From URL"}}
+	req := httptest.NewRequest(http.MethodPost, "/import", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303, got %d body: %s", rr.Code, rr.Body.String())
+	}
+	if len(requested) != 1 || requested[0] != "https://pcpartpicker.com/list/abc123/export" {
+		t.Fatalf("expected one request to the export URL, got %v", requested)
+	}
+	parts, err := db.New(sqlDB).ListParts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 || parts[0].Name != "Ryzen 7 5800X" {
+		t.Fatalf("expected the exported part to be imported, got %+v", parts)
+	}
+}
+
+func TestFetchPCPP_RejectsOffsiteRedirect(t *testing.T) {
+	var offsite bool
+	fakePCPP(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "pcpartpicker.com" {
+			offsite = true
+			return textResponse(r, http.StatusOK, "internal data", nil), nil
+		}
+		loc := http.Header{"Location": {"http://169.254.169.254/latest/meta-data"}}
+		return textResponse(r, http.StatusFound, "", loc), nil
+	})
+
+	_, _, err := fetchPCPP(context.Background(), "https://pcpartpicker.com/list/abc123/export")
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("expected redirect to be rejected, got err=%v", err)
+	}
+	if offsite {
+		t.Fatal("client followed the redirect off pcpartpicker.com")
+	}
+}
+
+func TestFetchPCPP_FollowsOnsiteRedirect(t *testing.T) {
+	fakePCPP(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "pcpartpicker.com" {
+			loc := http.Header{"Location": {"https://www.pcpartpicker.com" + r.URL.Path}}
+			return textResponse(r, http.StatusMovedPermanently, "", loc), nil
+		}
+		return textResponse(r, http.StatusOK, "ok", nil), nil
+	})
+
+	body, status, err := fetchPCPP(context.Background(), "https://pcpartpicker.com/list/abc123/export")
+	if err != nil || status != http.StatusOK || string(body) != "ok" {
+		t.Fatalf("expected redirect within pcpartpicker.com to be followed, got status=%d body=%q err=%v", status, body, err)
+	}
+}
+
+func TestFetchPCPP_BodyLimit(t *testing.T) {
+	size := maxPCPPBody
+	fakePCPP(t, func(r *http.Request) (*http.Response, error) {
+		return textResponse(r, http.StatusOK, strings.Repeat("x", size), nil), nil
+	})
+
+	if _, _, err := fetchPCPP(context.Background(), "https://pcpartpicker.com/list/a/export"); err != nil {
+		t.Fatalf("body exactly at the limit should be accepted, got %v", err)
+	}
+	size = maxPCPPBody + 1
+	if _, _, err := fetchPCPP(context.Background(), "https://pcpartpicker.com/list/a/export"); err == nil {
+		t.Fatal("expected oversized body to be rejected")
 	}
 }

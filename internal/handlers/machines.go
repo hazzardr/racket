@@ -61,7 +61,7 @@ func (h *Handler) Landing(w http.ResponseWriter, _ *http.Request) {
 func (h *Handler) MachinesPage(w http.ResponseWriter, r *http.Request) {
 	machines, err := h.queries.ListMachines(r.Context())
 	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
 
@@ -70,7 +70,7 @@ func (h *Handler) MachinesPage(w http.ResponseWriter, r *http.Request) {
 		row := machineRow{Machine: m}
 		slots, err := h.queries.ListSlotsByMachine(r.Context(), m.ID)
 		if err != nil {
-			h.renderError(w, r, http.StatusInternalServerError, err.Error())
+			h.serverError(w, r, err)
 			return
 		}
 		row.TotalSlots = len(slots)
@@ -81,7 +81,7 @@ func (h *Handler) MachinesPage(w http.ResponseWriter, r *http.Request) {
 		}
 		parts, err := h.queries.ListPartsByMachine(r.Context(), sql.NullInt64{Int64: m.ID, Valid: true})
 		if err != nil {
-			h.renderError(w, r, http.StatusInternalServerError, err.Error())
+			h.serverError(w, r, err)
 			return
 		}
 		for _, p := range parts {
@@ -111,17 +111,17 @@ func (h *Handler) MachineDetailPage(w http.ResponseWriter, r *http.Request) {
 			h.renderError(w, r, http.StatusNotFound, "Machine not found.")
 			return
 		}
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
 	slots, err := h.queries.ListSlotsByMachine(r.Context(), id)
 	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
 	parts, err := h.queries.ListPartsByMachine(r.Context(), sql.NullInt64{Int64: id, Valid: true})
 	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
 	unassigned := make([]db.Part, 0, len(parts))
@@ -173,12 +173,17 @@ func (h *Handler) CreateMachine(w http.ResponseWriter, r *http.Request) {
 		PurchasedOn: parseDate(page.PurchasedOn),
 	})
 	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		if isUniqueViolation(err) {
+			page.Error = fmt.Sprintf("A machine named %q already exists.", page.Name)
+			h.web.Render(w, http.StatusUnprocessableEntity, "new_machine.html", page)
+			return
+		}
+		h.serverError(w, r, err)
 		return
 	}
 	h.seedDefaultSlots(r.Context(), h.queries, machine.ID)
 
-	redirectNativeOrHX(w, r, fmt.Sprintf("/machines/%d", machine.ID))
+	redirectNativeOrHX(w, r, fmt.Sprintf("%s/%d", machinesPath, machine.ID))
 }
 
 // DeleteMachine handles POST /machines/{id}/delete and redirects to the list.
@@ -189,8 +194,8 @@ func (h *Handler) DeleteMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.queries.DeleteMachine(r.Context(), id); err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
-	redirectNativeOrHX(w, r, "/machines")
+	redirectNativeOrHX(w, r, machinesPath)
 }

@@ -340,3 +340,70 @@ func TestDeleteSlotUnassignsPart(t *testing.T) {
 		t.Fatal("Part A not found in parts list after slot deletion")
 	}
 }
+
+// htmx slot actions must swap fragments in place: an Hx-Redirect header would
+// make htmx navigate instead and discard the fragment.
+func TestSlotHXResponsesHaveNoRedirect(t *testing.T) {
+	r, sqlDB := newTestRouter(t)
+	defer sqlDB.Close()
+
+	machineID := createTestMachine(t, r, "test")
+	slotPath := "/slots/" + strconv.FormatInt(testSlots(t, sqlDB, machineID)[0].ID, 10)
+
+	steps := []struct {
+		path string
+		data url.Values
+	}{
+		{"/machines/" + strconv.FormatInt(machineID, 10) + "/slots", url.Values{"category": {"NIC"}}},
+		{slotPath + "/part", url.Values{"name": {"Part A"}}},
+		{slotPath + "/part/delete", nil},
+		{slotPath + "/delete", nil},
+	}
+	for _, s := range steps {
+		rr := postFormHX(r, s.path, s.data)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: expected 200, got %d body: %s", s.path, rr.Code, rr.Body.String())
+		}
+		if loc := rr.Header().Get("Hx-Redirect"); loc != "" {
+			t.Errorf("%s: unexpected Hx-Redirect %q", s.path, loc)
+		}
+	}
+}
+
+func TestCreateMachineDuplicateName(t *testing.T) {
+	r, sqlDB := newTestRouter(t)
+	defer sqlDB.Close()
+
+	createTestMachine(t, r, "box")
+	rr := postForm(r, "/machines", url.Values{"name": {"box"}, "location": {"closet"}})
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d body: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "already exists") {
+		t.Fatalf("expected duplicate-name error in re-rendered form, got: %s", body)
+	}
+	if !strings.Contains(body, `value="closet"`) {
+		t.Fatalf("expected form input to be preserved, got: %s", body)
+	}
+}
+
+// Internal errors are logged, not shown: the page must not leak driver text.
+func TestServerErrorHidesDetails(t *testing.T) {
+	sqlDB := newTestDB(t)
+	h := New(sqlDB, db.New(sqlDB), newTestWeb(t))
+	sqlDB.Close() // force every query to fail with "sql: database is closed"
+
+	rr := httptest.NewRecorder()
+	h.MachinesPage(rr, httptest.NewRequest(http.MethodGet, "/machines", nil))
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rr.Code)
+	}
+	body := rr.Body.String()
+	if strings.Contains(body, "sql:") || strings.Contains(body, "closed") {
+		t.Fatalf("error page leaked internal error text: %s", body)
+	}
+	if !strings.Contains(body, "Something went wrong") {
+		t.Fatalf("expected generic error message, got: %s", body)
+	}
+}

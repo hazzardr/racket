@@ -6,6 +6,10 @@ ORDER BY created_at DESC;
 SELECT * FROM machines
 WHERE id = ?;
 
+-- name: GetMachineByName :one
+SELECT * FROM machines
+WHERE name = ?;
+
 -- name: CreateMachine :one
 INSERT INTO machines (name, description, location, built_on, purchased_on)
 VALUES (?, ?, ?, ?, ?)

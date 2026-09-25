@@ -42,7 +42,7 @@ func (h *Handler) getSlot(w http.ResponseWriter, r *http.Request, id int64) (db.
 			h.renderError(w, r, http.StatusNotFound, "Slot not found.")
 			return db.MachineSlot{}, false
 		}
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return db.MachineSlot{}, false
 	}
 	return slot, true
@@ -81,15 +81,15 @@ func (h *Handler) AssignPart(w http.ResponseWriter, r *http.Request) {
 		SlotID:       sql.NullInt64{Int64: slot.ID, Valid: true},
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
+		if isUniqueViolation(err) {
 			h.renderFilledSlotError(w, r, slot)
 			return
 		}
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
 
-	if redirectNativeOrHX(w, r, fmt.Sprintf("/machines/%d", slot.MachineID)) {
+	if redirectNative(w, r, fmt.Sprintf("%s/%d", machinesPath, slot.MachineID)) {
 		return
 	}
 	h.web.Fragment(w, "slot_card", slotVM(slot, &part))
@@ -101,7 +101,7 @@ func (h *Handler) AssignPart(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) renderFilledSlotError(w http.ResponseWriter, r *http.Request, slot db.MachineSlot) {
 	rows, err := h.queries.ListSlotsByMachine(r.Context(), slot.MachineID)
 	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
 	for _, row := range rows {
@@ -111,7 +111,7 @@ func (h *Handler) renderFilledSlotError(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 	}
-	h.renderError(w, r, http.StatusInternalServerError, "slot not found in machine")
+	h.serverError(w, r, fmt.Errorf("slot %d not found in machine %d", slot.ID, slot.MachineID))
 }
 
 // UnassignPart handles POST /slots/{id}/part/delete: deletes the part in the
@@ -128,10 +128,10 @@ func (h *Handler) UnassignPart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.queries.DeletePartsBySlot(r.Context(), sql.NullInt64{Int64: id, Valid: true}); err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
-	if redirectNativeOrHX(w, r, fmt.Sprintf("/machines/%d", slot.MachineID)) {
+	if redirectNative(w, r, fmt.Sprintf("%s/%d", machinesPath, slot.MachineID)) {
 		return
 	}
 	h.web.Fragment(w, "slot_card", slotVM(slot, nil))
@@ -159,7 +159,7 @@ func (h *Handler) CreateSlot(w http.ResponseWriter, r *http.Request) {
 			h.renderError(w, r, http.StatusNotFound, "Machine not found.")
 			return
 		}
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
 
@@ -168,11 +168,11 @@ func (h *Handler) CreateSlot(w http.ResponseWriter, r *http.Request) {
 		Category:  category,
 	})
 	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
 
-	if redirectNativeOrHX(w, r, fmt.Sprintf("/machines/%d", machineID)) {
+	if redirectNative(w, r, fmt.Sprintf("%s/%d", machinesPath, machineID)) {
 		return
 	}
 	h.web.Fragment(w, "slot_card", slotVM(slot, nil))
@@ -192,14 +192,14 @@ func (h *Handler) DeleteSlot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.queries.UnassignPartsBySlot(r.Context(), sql.NullInt64{Int64: id, Valid: true}); err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
 	if err := h.queries.DeleteSlot(r.Context(), id); err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
-	if redirectNativeOrHX(w, r, fmt.Sprintf("/machines/%d", slot.MachineID)) {
+	if redirectNative(w, r, fmt.Sprintf("%s/%d", machinesPath, slot.MachineID)) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)

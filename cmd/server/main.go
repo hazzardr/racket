@@ -19,12 +19,16 @@ import (
 	"racket/internal/db"
 	"racket/internal/handlers"
 	"racket/internal/web"
+	"racket/migrations"
 
 	_ "modernc.org/sqlite"
 )
 
 func init() {
-	goose.SetDialect("sqlite3")
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		panic(err)
+	}
+	goose.SetBaseFS(migrations.FS)
 }
 
 func main() {
@@ -42,8 +46,10 @@ func main() {
 }
 
 // sqliteDSN turns a plain path into a file: URI with foreign key enforcement
-// enabled. SQLite defaults PRAGMA foreign_keys to off, which would silently
-// disable the schema's ON DELETE CASCADE/SET NULL clauses.
+// and a busy timeout. SQLite defaults PRAGMA foreign_keys to off, which would
+// silently disable the schema's ON DELETE CASCADE/SET NULL clauses. Without
+// busy_timeout, a write that hits another connection's lock fails immediately
+// with "database is locked" instead of waiting.
 func sqliteDSN(path string) string {
 	if !strings.HasPrefix(path, "file:") {
 		path = "file:" + path
@@ -52,7 +58,7 @@ func sqliteDSN(path string) string {
 	if strings.Contains(path, "?") {
 		sep = "&"
 	}
-	return path + sep + "_pragma=foreign_keys(1)"
+	return path + sep + "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 }
 
 func run() error {
@@ -71,7 +77,7 @@ func run() error {
 		return fmt.Errorf("ping database: %w", err)
 	}
 
-	if err := goose.Up(sqlDB, "migrations"); err != nil {
+	if err := goose.Up(sqlDB, "."); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 
@@ -83,26 +89,7 @@ func run() error {
 	}
 	h := handlers.New(sqlDB, queries, webUI)
 
-	r := chi.NewRouter()
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-
-	r.Get("/", h.Landing)
-	r.Get("/machines", h.MachinesPage)
-	r.Get("/machines/new", h.NewMachinePage)
-	r.Post("/machines", h.CreateMachine)
-	r.Get("/machines/{id}", h.MachineDetailPage)
-	r.Post("/machines/{id}/delete", h.DeleteMachine)
-	r.Post("/machines/{id}/slots", h.CreateSlot)
-	r.Post("/slots/{id}/part", h.AssignPart)
-	r.Post("/slots/{id}/part/delete", h.UnassignPart)
-	r.Post("/slots/{id}/delete", h.DeleteSlot)
-	r.Post("/parts/{id}/delete", h.DeletePart)
-	r.Get("/import", h.ImportPage)
-
-	r.Post("/import", h.Import)
-
-	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServerFS(webUI.Static())))
+	r := newRouter(h, webUI)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -122,4 +109,31 @@ func run() error {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil
+}
+
+// newRouter wires the middleware stack and routes.
+func newRouter(h *handlers.Handler, webUI *web.Web) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	// Reject cross-site state-changing requests (CSRF) using the browser's
+	// Sec-Fetch-Site and Origin headers. GET/HEAD/OPTIONS pass through.
+	r.Use(http.NewCrossOriginProtection().Handler)
+
+	r.Get("/", h.Landing)
+	r.Get("/machines", h.MachinesPage)
+	r.Get("/machines/new", h.NewMachinePage)
+	r.Post("/machines", h.CreateMachine)
+	r.Get("/machines/{id}", h.MachineDetailPage)
+	r.Post("/machines/{id}/delete", h.DeleteMachine)
+	r.Post("/machines/{id}/slots", h.CreateSlot)
+	r.Post("/slots/{id}/part", h.AssignPart)
+	r.Post("/slots/{id}/part/delete", h.UnassignPart)
+	r.Post("/slots/{id}/delete", h.DeleteSlot)
+	r.Post("/parts/{id}/delete", h.DeletePart)
+	r.Get("/import", h.ImportPage)
+	r.Post("/import", h.Import)
+
+	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServerFS(webUI.Static())))
+	return r
 }
