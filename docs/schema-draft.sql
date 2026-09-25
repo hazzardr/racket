@@ -21,6 +21,14 @@
 --   status = 'wanted'                  -> not purchased
 --   parts.owner_id = machines.owner_id -> the builder's own part
 --   otherwise                          -> borrowed from parts.owner_id
+--   ...whose owner has left            -> from a former member
+--
+-- Leaving: removing a user sets users.deleted_at (soft delete) and ends their
+-- sessions. Parts they lent stay in friends' machines; everything else of
+-- theirs drops out of listings and can't be borrowed or edited. Logging in
+-- again (still gated on the Discord server) clears deleted_at and restores it
+-- all. Deleting the users row is the hard purge: the cascades below remove
+-- everything they own, including lent parts.
 
 -- +goose Up
 
@@ -33,7 +41,8 @@ CREATE TABLE users (
     avatar_hash TEXT,                 -- builds cdn.discordapp.com avatar URLs
     is_admin BOOLEAN NOT NULL DEFAULT FALSE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_login_at DATETIME
+    last_login_at DATETIME,
+    deleted_at DATETIME               -- set when the user leaves; see header
 );
 
 -- The cookie holds a random token; only its SHA-256 is stored, so a leaked
