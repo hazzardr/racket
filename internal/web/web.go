@@ -9,7 +9,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"racket/internal/db"
 )
@@ -26,21 +28,52 @@ type Web struct {
 }
 
 // Page is the data every full page renders with: the signed-in user (nil
-// when signed out) for the header, and the page's own data.
+// when signed out) and the request path for the header, and the page's own
+// data.
 type Page struct {
 	User *db.User
+	Path string
 	Data any
 }
 
 var funcs = template.FuncMap{
-	// money formats cents as a decimal amount: 123456 -> "1234.56".
+	// money formats cents as a decimal amount: 123456 -> "1,234.56".
 	"money": func(cents int64) string {
 		sign := ""
 		if cents < 0 {
 			sign, cents = "-", -cents
 		}
-		return fmt.Sprintf("%s%d.%02d", sign, cents/100, cents%100)
+		whole := strconv.FormatInt(cents/100, 10)
+		for i := len(whole) - 3; i > 0; i -= 3 {
+			whole = whole[:i] + "," + whole[i:]
+		}
+		return fmt.Sprintf("%s%s.%02d", sign, whole, cents%100)
 	},
+	"hasPrefix": strings.HasPrefix,
+	"ago":       ago,
+	// percent is part/total as a whole percentage, 0 when total is 0.
+	"percent": func(part, total int64) int64 {
+		if total == 0 {
+			return 0
+		}
+		return part * 100 / total
+	},
+}
+
+// agoToday is what ago says for anything in the last day.
+const agoToday = "today"
+
+// ago says roughly how long ago t was, in whole days: "today",
+// "yesterday", "3 days ago".
+func ago(t time.Time) string {
+	switch days := int(time.Since(t).Hours() / 24); {
+	case days < 1: // also a little in the future, from clock skew
+		return agoToday
+	case days == 1:
+		return "yesterday"
+	default:
+		return strconv.Itoa(days) + " days ago"
+	}
 }
 
 func New() (*Web, error) {

@@ -47,7 +47,7 @@ func viewer(r *http.Request) db.User {
 
 // render renders a full page with the signed-in user for the header.
 func (h *Handler) render(w http.ResponseWriter, r *http.Request, status int, name string, data any) {
-	page := web.Page{Data: data}
+	page := web.Page{Path: r.URL.Path, Data: data}
 	if u, ok := auth.UserFrom(r.Context()); ok {
 		page.User = &u
 	}

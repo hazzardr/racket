@@ -14,7 +14,11 @@ with parts inside.
 - You can put a friend's spare part in your machine. It stays theirs, and
   either of you can take it out again. Slots show whether a part is yours,
   borrowed, or not bought yet.
-- PCPartPicker lists and CSVs import into a machine, one part per slot.
+- PCPartPicker lists import into a machine, one part per slot: paste the
+  list's Markup > Text (PCPartPicker shows lists only to signed-in users, so
+  Racket can't fetch them). CSV files import too. Pasting the list again
+  updates the prices of parts not bought yet; marking a part bought keeps
+  the price you paid.
 - The frontend uses htmx + stdlib `html/template`.
 - The app embeds all assets into the Go binary. The build is one executable.
 - The database is SQLite with type-safe queries from sqlc. goose applies

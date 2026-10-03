@@ -95,22 +95,24 @@ const createPart = `-- name: CreatePart :one
 
 INSERT INTO parts (
     owner_id, slot_id, status, name, category, manufacturer, model,
-    price_cents, purchased_from
+    price_cents, purchased_from, source_url, price_checked_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, owner_id, slot_id, status, name, category, manufacturer, model, serial_number, price_cents, currency, purchased_on, purchased_from, warranty_expires, product_url, guide_url, notes, created_at, updated_at
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, owner_id, slot_id, status, name, category, manufacturer, model, serial_number, price_cents, currency, purchased_on, purchased_from, warranty_expires, product_url, guide_url, notes, created_at, updated_at, source_url, price_checked_at, previous_price_cents, missing_from_source_at
 `
 
 type CreatePartParams struct {
-	OwnerID       int64
-	SlotID        sql.NullInt64
-	Status        string
-	Name          string
-	Category      sql.NullString
-	Manufacturer  sql.NullString
-	Model         sql.NullString
-	PriceCents    sql.NullInt64
-	PurchasedFrom sql.NullString
+	OwnerID        int64
+	SlotID         sql.NullInt64
+	Status         string
+	Name           string
+	Category       sql.NullString
+	Manufacturer   sql.NullString
+	Model          sql.NullString
+	PriceCents     sql.NullInt64
+	PurchasedFrom  sql.NullString
+	SourceUrl      sql.NullString
+	PriceCheckedAt sql.NullTime
 }
 
 // Parts ---------------------------------------------------------------------
@@ -125,6 +127,8 @@ func (q *Queries) CreatePart(ctx context.Context, arg CreatePartParams) (Part, e
 		arg.Model,
 		arg.PriceCents,
 		arg.PurchasedFrom,
+		arg.SourceUrl,
+		arg.PriceCheckedAt,
 	)
 	var i Part
 	err := row.Scan(
@@ -147,6 +151,10 @@ func (q *Queries) CreatePart(ctx context.Context, arg CreatePartParams) (Part, e
 		&i.Notes,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SourceUrl,
+		&i.PriceCheckedAt,
+		&i.PreviousPriceCents,
+		&i.MissingFromSourceAt,
 	)
 	return i, err
 }
@@ -471,7 +479,7 @@ func (q *Queries) ListMachines(ctx context.Context) ([]ListMachinesRow, error) {
 }
 
 const listPartsByOwner = `-- name: ListPartsByOwner :many
-SELECT id, owner_id, slot_id, status, name, category, manufacturer, model, serial_number, price_cents, currency, purchased_on, purchased_from, warranty_expires, product_url, guide_url, notes, created_at, updated_at FROM parts WHERE owner_id = ? ORDER BY created_at DESC, id DESC
+SELECT id, owner_id, slot_id, status, name, category, manufacturer, model, serial_number, price_cents, currency, purchased_on, purchased_from, warranty_expires, product_url, guide_url, notes, created_at, updated_at, source_url, price_checked_at, previous_price_cents, missing_from_source_at FROM parts WHERE owner_id = ? ORDER BY created_at DESC, id DESC
 `
 
 func (q *Queries) ListPartsByOwner(ctx context.Context, ownerID int64) ([]Part, error) {
@@ -503,6 +511,76 @@ func (q *Queries) ListPartsByOwner(ctx context.Context, ownerID int64) ([]Part, 
 			&i.Notes,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SourceUrl,
+			&i.PriceCheckedAt,
+			&i.PreviousPriceCents,
+			&i.MissingFromSourceAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRefreshableParts = `-- name: ListRefreshableParts :many
+
+SELECT parts.id, parts.owner_id, parts.slot_id, parts.status, parts.name, parts.category, parts.manufacturer, parts.model, parts.serial_number, parts.price_cents, parts.currency, parts.purchased_on, parts.purchased_from, parts.warranty_expires, parts.product_url, parts.guide_url, parts.notes, parts.created_at, parts.updated_at, parts.source_url, parts.price_checked_at, parts.previous_price_cents, parts.missing_from_source_at FROM parts
+JOIN machine_slots s ON s.id = parts.slot_id
+JOIN machines m ON m.id = s.machine_id
+WHERE m.id = ?1 AND m.owner_id = ?2
+  AND parts.owner_id = ?2
+  AND parts.status = 'wanted' AND parts.source_url IS NOT NULL
+ORDER BY s.position, s.id
+`
+
+type ListRefreshablePartsParams struct {
+	MachineID int64
+	UserID    int64
+}
+
+// Price refresh -------------------------------------------------------------
+// The machine's parts that its owner hasn't bought yet and that came from a
+// PCPartPicker list, in slot order.
+func (q *Queries) ListRefreshableParts(ctx context.Context, arg ListRefreshablePartsParams) ([]Part, error) {
+	rows, err := q.db.QueryContext(ctx, listRefreshableParts, arg.MachineID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Part
+	for rows.Next() {
+		var i Part
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.SlotID,
+			&i.Status,
+			&i.Name,
+			&i.Category,
+			&i.Manufacturer,
+			&i.Model,
+			&i.SerialNumber,
+			&i.PriceCents,
+			&i.Currency,
+			&i.PurchasedOn,
+			&i.PurchasedFrom,
+			&i.WarrantyExpires,
+			&i.ProductUrl,
+			&i.GuideUrl,
+			&i.Notes,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SourceUrl,
+			&i.PriceCheckedAt,
+			&i.PreviousPriceCents,
+			&i.MissingFromSourceAt,
 		); err != nil {
 			return nil, err
 		}
@@ -522,6 +600,10 @@ SELECT machine_slots.id, machine_slots.machine_id, machine_slots.category,
        parts.id AS part_id, parts.name AS part_name, parts.model AS part_model,
        parts.status AS part_status, parts.price_cents AS part_price_cents,
        parts.owner_id AS part_owner_id, users.username AS part_owner_name,
+       parts.source_url AS part_source_url,
+       parts.previous_price_cents AS part_previous_price_cents,
+       parts.price_checked_at AS part_price_checked_at,
+       parts.missing_from_source_at AS part_missing_from_source_at,
        CASE
          WHEN parts.id IS NULL THEN 'empty'
          WHEN parts.status = 'wanted' THEN 'unpurchased'
@@ -538,17 +620,21 @@ ORDER BY machine_slots.position, machine_slots.id
 `
 
 type ListSlotsByMachineRow struct {
-	ID             int64
-	MachineID      int64
-	Category       string
-	PartID         sql.NullInt64
-	PartName       sql.NullString
-	PartModel      sql.NullString
-	PartStatus     sql.NullString
-	PartPriceCents sql.NullInt64
-	PartOwnerID    sql.NullInt64
-	PartOwnerName  sql.NullString
-	PartSource     string
+	ID                      int64
+	MachineID               int64
+	Category                string
+	PartID                  sql.NullInt64
+	PartName                sql.NullString
+	PartModel               sql.NullString
+	PartStatus              sql.NullString
+	PartPriceCents          sql.NullInt64
+	PartOwnerID             sql.NullInt64
+	PartOwnerName           sql.NullString
+	PartSourceUrl           sql.NullString
+	PartPreviousPriceCents  sql.NullInt64
+	PartPriceCheckedAt      sql.NullTime
+	PartMissingFromSourceAt sql.NullTime
+	PartSource              string
 }
 
 // part_source labels each slot relative to the machine's owner:
@@ -573,6 +659,10 @@ func (q *Queries) ListSlotsByMachine(ctx context.Context, machineID int64) ([]Li
 			&i.PartPriceCents,
 			&i.PartOwnerID,
 			&i.PartOwnerName,
+			&i.PartSourceUrl,
+			&i.PartPreviousPriceCents,
+			&i.PartPriceCheckedAt,
+			&i.PartMissingFromSourceAt,
 			&i.PartSource,
 		); err != nil {
 			return nil, err
@@ -586,6 +676,91 @@ func (q *Queries) ListSlotsByMachine(ctx context.Context, machineID int64) ([]Li
 		return nil, err
 	}
 	return items, nil
+}
+
+const markPartBought = `-- name: MarkPartBought :execrows
+UPDATE parts SET
+    status = 'owned',
+    price_cents = coalesce(?1, price_cents),
+    previous_price_cents = NULL,
+    missing_from_source_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?2 AND owner_id = ?3 AND status = 'wanted'
+`
+
+type MarkPartBoughtParams struct {
+	PriceCents sql.NullInt64
+	ID         int64
+	UserID     int64
+}
+
+// The owner bought a planned part. Its price becomes what they paid (or
+// stays the last known price), and refreshes leave it alone from now on.
+func (q *Queries) MarkPartBought(ctx context.Context, arg MarkPartBoughtParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markPartBought, arg.PriceCents, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const markPartMissingFromSource = `-- name: MarkPartMissingFromSource :execrows
+UPDATE parts SET
+    previous_price_cents = NULL,
+    missing_from_source_at = ?1,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?2 AND owner_id = ?3 AND status = 'wanted'
+`
+
+type MarkPartMissingFromSourceParams struct {
+	CheckedAt sql.NullTime
+	ID        int64
+	UserID    int64
+}
+
+// The part wasn't on its list at the last refresh. Its price stays as it was.
+func (q *Queries) MarkPartMissingFromSource(ctx context.Context, arg MarkPartMissingFromSourceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markPartMissingFromSource, arg.CheckedAt, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const refreshPartPrice = `-- name: RefreshPartPrice :execrows
+UPDATE parts SET
+    price_cents = coalesce(?1, price_cents),
+    previous_price_cents = CASE
+        WHEN ?1 IS NOT NULL AND price_cents <> ?1 THEN price_cents
+    END,
+    price_checked_at = ?2,
+    missing_from_source_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?3 AND owner_id = ?4 AND status = 'wanted'
+`
+
+type RefreshPartPriceParams struct {
+	PriceCents sql.NullInt64
+	CheckedAt  sql.NullTime
+	ID         int64
+	UserID     int64
+}
+
+// Records a price found on the part's list. A NULL price (the list shows
+// none) keeps the old one. previous_price_cents keeps the old price only
+// when this refresh changed it. Bought parts never change.
+// SET expressions all read the row's old values, so the order is free.
+func (q *Queries) RefreshPartPrice(ctx context.Context, arg RefreshPartPriceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, refreshPartPrice,
+		arg.PriceCents,
+		arg.CheckedAt,
+		arg.ID,
+		arg.UserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const softDeleteUser = `-- name: SoftDeleteUser :execrows

@@ -18,6 +18,16 @@
     {{- else if eq .PartSource "former_member"}}<span class="part-badge badge-former">from a former member</span>
     {{- else if eq .PartSource "unpurchased"}}<span class="part-badge badge-unpurchased">not bought yet</span>
     {{- end}}
+    {{if .PriceDelta}}<span class="part-badge {{if .PriceDown}}badge-price-down{{else}}badge-price-up{{end}}" title="Change at the last price check">{{if .PriceDown}}&darr;{{else}}&uarr;{{end}} ${{money .PriceDelta}}</span>{{end}}
+    {{if .PartMissingFromSourceAt.Valid}}<span class="part-badge badge-missing" title="Checked {{ago .PartMissingFromSourceAt.Time}}">not on its PCPartPicker list anymore</span>{{end}}
+    {{if .CanMarkBought}}
+    <form class="mark-bought" method="post" action="/slots/{{.ID}}/part/bought"
+          hx-post="/slots/{{.ID}}/part/bought" hx-target="#slot-{{.ID}}" hx-swap="outerHTML">
+      <input name="price" type="text" inputmode="decimal" placeholder="Price paid" aria-label="Price paid"
+             value="{{if .PartPriceCents.Valid}}{{money .PartPriceCents.Int64}}{{end}}">
+      <button type="submit" class="btn btn-small">Mark bought</button>
+    </form>
+    {{end}}
     {{if .RemoveLabel}}
     <form method="post" action="/slots/{{.ID}}/part/delete" class="inline-form"
           hx-post="/slots/{{.ID}}/part/delete" hx-target="#slot-{{.ID}}" hx-swap="outerHTML">

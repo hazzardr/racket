@@ -104,6 +104,10 @@ SELECT machine_slots.id, machine_slots.machine_id, machine_slots.category,
        parts.id AS part_id, parts.name AS part_name, parts.model AS part_model,
        parts.status AS part_status, parts.price_cents AS part_price_cents,
        parts.owner_id AS part_owner_id, users.username AS part_owner_name,
+       parts.source_url AS part_source_url,
+       parts.previous_price_cents AS part_previous_price_cents,
+       parts.price_checked_at AS part_price_checked_at,
+       parts.missing_from_source_at AS part_missing_from_source_at,
        CASE
          WHEN parts.id IS NULL THEN 'empty'
          WHEN parts.status = 'wanted' THEN 'unpurchased'
@@ -123,9 +127,9 @@ ORDER BY machine_slots.position, machine_slots.id;
 -- name: CreatePart :one
 INSERT INTO parts (
     owner_id, slot_id, status, name, category, manufacturer, model,
-    price_cents, purchased_from
+    price_cents, purchased_from, source_url, price_checked_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: ListPartsByOwner :many
@@ -160,3 +164,50 @@ WHERE parts.id = sqlc.arg(part_id)
 
 -- name: DeletePart :execrows
 DELETE FROM parts WHERE id = ? AND owner_id = ?;
+
+-- name: MarkPartBought :execrows
+-- The owner bought a planned part. Its price becomes what they paid (or
+-- stays the last known price), and refreshes leave it alone from now on.
+UPDATE parts SET
+    status = 'owned',
+    price_cents = coalesce(sqlc.narg(price_cents), price_cents),
+    previous_price_cents = NULL,
+    missing_from_source_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = sqlc.arg(id) AND owner_id = sqlc.arg(user_id) AND status = 'wanted';
+
+-- Price refresh -------------------------------------------------------------
+
+-- name: ListRefreshableParts :many
+-- The machine's parts that its owner hasn't bought yet and that came from a
+-- PCPartPicker list, in slot order.
+SELECT parts.* FROM parts
+JOIN machine_slots s ON s.id = parts.slot_id
+JOIN machines m ON m.id = s.machine_id
+WHERE m.id = sqlc.arg(machine_id) AND m.owner_id = sqlc.arg(user_id)
+  AND parts.owner_id = sqlc.arg(user_id)
+  AND parts.status = 'wanted' AND parts.source_url IS NOT NULL
+ORDER BY s.position, s.id;
+
+-- name: RefreshPartPrice :execrows
+-- Records a price found on the part's list. A NULL price (the list shows
+-- none) keeps the old one. previous_price_cents keeps the old price only
+-- when this refresh changed it. Bought parts never change.
+-- SET expressions all read the row's old values, so the order is free.
+UPDATE parts SET
+    price_cents = coalesce(sqlc.narg(price_cents), price_cents),
+    previous_price_cents = CASE
+        WHEN sqlc.narg(price_cents) IS NOT NULL AND price_cents <> sqlc.narg(price_cents) THEN price_cents
+    END,
+    price_checked_at = sqlc.arg(checked_at),
+    missing_from_source_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = sqlc.arg(id) AND owner_id = sqlc.arg(user_id) AND status = 'wanted';
+
+-- name: MarkPartMissingFromSource :execrows
+-- The part wasn't on its list at the last refresh. Its price stays as it was.
+UPDATE parts SET
+    previous_price_cents = NULL,
+    missing_from_source_at = sqlc.arg(checked_at),
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = sqlc.arg(id) AND owner_id = sqlc.arg(user_id) AND status = 'wanted';

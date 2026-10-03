@@ -14,12 +14,34 @@
         </p>
       </div>
       {{if .IsOwner}}
-      <form method="post" action="/machines/{{.Machine.ID}}/delete" class="inline-form"
-            hx-post="/machines/{{.Machine.ID}}/delete" hx-confirm="Delete {{.Machine.Name}}?">
-        <button type="submit" class="btn-danger">Delete machine</button>
-      </form>
+      <div class="machine-actions">
+        <form method="post" action="/machines/{{.Machine.ID}}/delete" class="inline-form"
+              hx-post="/machines/{{.Machine.ID}}/delete" hx-confirm="Delete {{.Machine.Name}}?">
+          <button type="submit" class="btn-danger">Delete machine</button>
+        </form>
+      </div>
       {{end}}
     </div>
+
+    {{if .PriceLists}}
+    <details class="card price-update">
+      <summary>
+        Update prices
+        {{- if not .PricesCheckedAt.IsZero}} <span class="meta">from PCPartPicker, checked {{ago .PricesCheckedAt}}</span>{{end}}
+      </summary>
+      <p class="meta">
+        Copy the list again on PCPartPicker (Markup, then the Text tab) and paste it here.
+        Parts you've bought keep the price you paid.
+      </p>
+      <p class="meta">
+        From {{range $i, $list := .PriceLists}}{{if $i}}, {{end}}<a href="{{$list}}" target="_blank" rel="noopener noreferrer" class="external-link">{{$list}}</a>{{end}}
+      </p>
+      <form class="form" method="post" action="/machines/{{.Machine.ID}}/prices">
+        <textarea name="list" rows="6" required placeholder="PCPartPicker Part List: https://pcpartpicker.com/list/…"></textarea>
+        <div class="form-actions"><button type="submit" class="btn btn-small">Update prices</button></div>
+      </form>
+    </details>
+    {{end}}
 
     <div class="slots-grid">
       {{range .Slots}}{{template "slot_card" .}}{{end}}

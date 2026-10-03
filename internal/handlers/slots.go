@@ -22,7 +22,13 @@ type slotCard struct {
 	// RemoveLabel names the remove-part button, or is "" when the viewer
 	// can't remove the part.
 	RemoveLabel string
-	Error       string
+	// CanMarkBought: the part is the viewer's and not bought yet.
+	CanMarkBought bool
+	// PriceDelta is how much the last price refresh moved a not-yet-bought
+	// part's price (0 if it didn't); PriceDown says which way.
+	PriceDelta int64
+	PriceDown  bool
+	Error      string
 }
 
 func newSlotCard(row db.ListSlotsByMachineRow, viewerID, machineOwnerID int64) slotCard {
@@ -31,6 +37,14 @@ func newSlotCard(row db.ListSlotsByMachineRow, viewerID, machineOwnerID int64) s
 		return card
 	}
 	ownsPart := row.PartOwnerID.Int64 == viewerID
+	if row.PartStatus.String == partWanted {
+		card.CanMarkBought = card.CanEdit && ownsPart
+		if row.PartPreviousPriceCents.Valid && row.PartPriceCents.Valid {
+			delta := row.PartPriceCents.Int64 - row.PartPreviousPriceCents.Int64
+			card.PriceDown = delta < 0
+			card.PriceDelta = max(delta, -delta)
+		}
+	}
 	switch {
 	case card.CanEdit && ownsPart:
 		card.RemoveLabel = "Remove"

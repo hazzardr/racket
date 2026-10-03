@@ -13,10 +13,15 @@
         From
         <a href="https://pcpartpicker.com" target="_blank" rel="noopener noreferrer" class="external-link">PCPartPicker<span class="external-link-icon" aria-label="(opens in new tab)">&#8599;</span></a>
       </h3>
+      <p class="meta">
+        On your list's page, choose <strong>Markup</strong>, then the <strong>Text</strong> tab.
+        Copy all of it and paste it here.
+      </p>
       <form class="form" method="post" action="/import">
         <label>
-          List URL
-          <input name="pcpartpicker_url" type="url" placeholder="https://pcpartpicker.com/list/XXXXXX" value="{{.PCPPURL}}" required>
+          Your list
+          <textarea name="pcpartpicker_text" rows="10" required
+                    placeholder="PCPartPicker Part List: https://pcpartpicker.com/list/…&#10;&#10;CPU: AMD Ryzen 7 9800X3D …  ($444.00 @ Amazon)">{{.PCPPText}}</textarea>
         </label>
         <label>
           Machine name (optional)
@@ -27,7 +32,7 @@
           Not bought yet (a planned build)
         </label>
         <div class="form-actions">
-          <button type="submit" class="btn">Import from URL</button>
+          <button type="submit" class="btn">Import list</button>
         </div>
       </form>
     </div>

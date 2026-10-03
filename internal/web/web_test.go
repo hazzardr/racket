@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"racket/internal/db"
 )
@@ -41,7 +42,9 @@ func TestMoney(t *testing.T) {
 	if !ok {
 		t.Fatal("money has the wrong type")
 	}
-	for cents, want := range map[int64]string{0: "0.00", 5: "0.05", 14999: "149.99", 123456: "1234.56", -250: "-2.50"} {
+	for cents, want := range map[int64]string{
+		0: "0.00", 5: "0.05", 14999: "149.99", 123456: "1,234.56", 123456789: "1,234,567.89", -250: "-2.50",
+	} {
 		if got := money(cents); got != want {
 			t.Errorf("money(%d) = %q, want %q", cents, got, want)
 		}
@@ -61,5 +64,22 @@ func TestRenderFailureIs500(t *testing.T) {
 	}
 	if bytes.Contains(rr.Body.Bytes(), []byte("partial output")) {
 		t.Error("response includes the partially rendered page")
+	}
+}
+
+func TestAgo(t *testing.T) {
+	now := time.Now()
+	for _, tt := range []struct {
+		t    time.Time
+		want string
+	}{
+		{now.Add(-time.Hour), agoToday},
+		{now.Add(time.Hour), agoToday}, // clock skew
+		{now.Add(-30 * time.Hour), "yesterday"},
+		{now.Add(-73 * time.Hour), "3 days ago"},
+	} {
+		if got := ago(tt.t); got != tt.want {
+			t.Errorf("ago(now%+v) = %q, want %q", tt.t.Sub(now).Round(time.Hour), got, tt.want)
+		}
 	}
 }

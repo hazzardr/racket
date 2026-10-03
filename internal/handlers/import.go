@@ -1,60 +1,32 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/csv"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"mime/multipart"
 	"net/http"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"golang.org/x/net/html"
-
 	"racket/internal/db"
 )
 
-var (
-	priceRe = regexp.MustCompile(`[^\d.]`)
+// priceRe strips everything but digits and the decimal point from a price.
+var priceRe = regexp.MustCompile(`[^\d.]`)
 
-	// pcppClient is used to fetch PCPartPicker export CSVs and pages.
-	pcppClient = &http.Client{Timeout: pcppTimeout, CheckRedirect: checkPCPPRedirect}
-)
-
-const (
-	// maxImportBody bounds the import request body (form fields + CSV upload).
-	maxImportBody = 10 << 20
-
-	// pcppTimeout bounds a single PCPartPicker fetch.
-	pcppTimeout = 30 * time.Second
-
-	// maxPCPPBody caps a PCPartPicker response; list pages are a few hundred KB.
-	maxPCPPBody = 5 << 20
-
-	// pcppHost is the only host import fetches from (plus its www. alias).
-	pcppHost = "pcpartpicker.com"
-
-	// maxPCPPRedirects matches net/http's default redirect limit.
-	maxPCPPRedirects = 10
-
-	// importWriteTimeout covers the CSV export fetch plus the HTML fallback
-	// fetch, with headroom for the database writes.
-	importWriteTimeout = 2*pcppTimeout + 10*time.Second
-)
+// maxImportBody bounds the import request body (form fields + CSV upload).
+const maxImportBody = 10 << 20
 
 // importPage is the import form state (also used for failure re-renders).
 type importPage struct {
 	Error       string
 	MachineName string
-	PCPPURL     string
+	PCPPText    string
 	Wanted      bool
 }
 
@@ -76,17 +48,14 @@ func (h *Handler) ImportPage(w http.ResponseWriter, r *http.Request) {
 	h.render(w, r, http.StatusOK, "import.html", importPage{})
 }
 
-// Import handles POST /import: accepts PCPartPicker URL or CSV file and
-// imports the parts as the viewer's, in a single transaction. With a machine
-// name, the parts go into that machine (created if needed), one per slot.
-// Without one, they go to the viewer's inventory.
+// Import handles POST /import: accepts a pasted PCPartPicker list (its
+// Markup > Text) or a CSV file and imports the parts as the viewer's, in a
+// single transaction. With a machine name, the parts go into that machine
+// (created if needed), one per slot. Without one, they go to the viewer's
+// inventory.
 func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
-	// PCPartPicker fetches can outlast the server-wide WriteTimeout. Not every
-	// ResponseWriter supports deadlines (e.g. httptest), so the error is ignored.
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(importWriteTimeout))
-
 	r.Body = http.MaxBytesReader(w, r.Body, maxImportBody)
-	// The URL form posts urlencoded; ParseMultipartForm has already parsed
+	// The paste form posts urlencoded; ParseMultipartForm has already parsed
 	// those fields by the time it reports ErrNotMultipart.
 	err := r.ParseMultipartForm(maxImportBody) //nolint:gosec // G120: body bounded by MaxBytesReader
 	if err != nil && !errors.Is(err, http.ErrNotMultipart) {
@@ -95,38 +64,21 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 
 	machineName := strings.TrimSpace(r.FormValue("machine_name"))
-	rawURL := strings.TrimSpace(r.FormValue("pcpartpicker_url"))
-	file, _, fileErr := r.FormFile("file")
+	text := strings.TrimSpace(r.FormValue("pcpartpicker_text"))
+	var file multipart.File
+	if f, _, err := r.FormFile("file"); err == nil {
+		file = f
+		defer f.Close()
+	}
 	status := partOwned
 	if r.FormValue("wanted") != "" {
 		status = partWanted
 	}
 
-	matches, msg := validateImportInput(rawURL, file, fileErr)
+	rows, source, msg := importRows(text, file)
 	if msg != "" {
-		h.renderImportError(w, r, machineName, rawURL, msg)
+		h.renderImportError(w, r, machineName, text, msg)
 		return
-	}
-
-	// Fetch and parse before opening the transaction so no SQLite write lock
-	// is held during network I/O.
-	var rows []csvRow
-	if rawURL != "" {
-		rows, err = h.importFromURL(r.Context(), rawURL, matches)
-		if err != nil {
-			// The error can carry network and parser internals; log it, not show it.
-			slog.WarnContext(r.Context(), "PCPartPicker import failed", "url", rawURL, "error", err)
-			h.renderImportError(w, r, machineName, rawURL,
-				"Couldn't import that list from PCPartPicker. Check that the list is public and try again.")
-			return
-		}
-	} else {
-		defer file.Close()
-		rows, err = parseCSVToRows(csv.NewReader(file))
-		if err != nil {
-			h.renderImportError(w, r, machineName, "", fmt.Sprintf("Failed to parse CSV: %v", err))
-			return
-		}
 	}
 
 	tx, err := h.db.BeginTx(r.Context(), nil)
@@ -149,7 +101,7 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := importParts(r.Context(), q, ownerID, machineID, status, rows); err != nil {
+	if err := importParts(r.Context(), q, ownerID, machineID, status, source, rows); err != nil {
 		_ = tx.Rollback()
 		h.serverError(w, r, err)
 		return
@@ -195,7 +147,9 @@ func (h *Handler) findOrCreateMachine(ctx context.Context, q *db.Queries, ownerI
 // importParts creates the rows as the owner's parts. With a machine, each
 // part goes into the first empty slot of its category, or a new slot if
 // none is free.
-func importParts(ctx context.Context, q *db.Queries, ownerID, machineID int64, status string, rows []csvRow) error {
+func importParts(
+	ctx context.Context, q *db.Queries, ownerID, machineID int64, status string, source priceSource, rows []csvRow,
+) error {
 	// Free slot IDs by lowercased category, in slot order.
 	free := map[string][]int64{}
 	if machineID != 0 {
@@ -227,7 +181,7 @@ func importParts(ctx context.Context, q *db.Queries, ownerID, machineID int64, s
 				slotID = sql.NullInt64{Int64: slot.ID, Valid: true}
 			}
 		}
-		if _, err := q.CreatePart(ctx, rowToCreateParams(row, ownerID, slotID, status)); err != nil {
+		if _, err := q.CreatePart(ctx, rowToCreateParams(row, ownerID, slotID, status, source)); err != nil {
 			return fmt.Errorf("create part %q: %w", row.name, err)
 		}
 	}
@@ -245,63 +199,49 @@ func slotCategory(partType string) string {
 	return partType
 }
 
+// importRows reads the parts to import from a pasted list or a CSV file
+// (nil if none was uploaded). It returns a user-facing message instead when
+// there's nothing to import.
+func importRows(text string, file multipart.File) ([]csvRow, priceSource, string) {
+	switch {
+	case text == "" && file == nil:
+		return nil, priceSource{}, "Paste a PCPartPicker list or upload a CSV file."
+	case text != "" && file != nil:
+		return nil, priceSource{}, "Use one: a pasted list or a CSV file, not both."
+	case text != "":
+		list := parsePCPPText(text)
+		if len(list.rows) == 0 {
+			return nil, priceSource{}, noPartsInPaste
+		}
+		var source priceSource
+		if list.url != "" {
+			source = priceSource{url: list.url, checkedAt: time.Now().UTC()}
+		}
+		return list.rows, source, ""
+	}
+	rows, err := parseCSVToRows(csv.NewReader(file))
+	if err != nil {
+		return nil, priceSource{}, fmt.Sprintf("Failed to parse CSV: %v", err)
+	}
+	if len(rows) == 0 {
+		return nil, priceSource{}, "That CSV has no parts in it."
+	}
+	return rows, priceSource{}, ""
+}
+
+// noPartsInPaste is the error for a paste with no part lines in it.
+const noPartsInPaste = "Racket couldn't find any parts in that text. " +
+	"On PCPartPicker, open the list's Markup, choose the Text tab, and paste all of it."
+
 // renderImportError re-renders the import page (400) with the error and the
 // user's prior input so they can retry.
-func (h *Handler) renderImportError(w http.ResponseWriter, r *http.Request, machineName, pcppURL, msg string) {
+func (h *Handler) renderImportError(w http.ResponseWriter, r *http.Request, machineName, pcppText, msg string) {
 	h.render(w, r, http.StatusBadRequest, "import.html", importPage{
 		Error:       msg,
 		MachineName: machineName,
-		PCPPURL:     pcppURL,
+		PCPPText:    pcppText,
 		Wanted:      r.FormValue("wanted") != "",
 	})
-}
-
-// validateImportInput enforces exactly one of a PCPartPicker URL or a CSV
-// file, and that the URL is a PCPartPicker list/build URL. It returns the
-// URL regex matches for importFromURL and a user-facing message ("" if valid).
-func validateImportInput(rawURL string, file multipart.File, fileErr error) ([]string, string) {
-	hasURL := rawURL != ""
-	hasFile := file != nil && fileErr == nil
-	switch {
-	case !hasURL && !hasFile:
-		return nil, "Provide a PCPartPicker URL or upload a CSV file."
-	case hasURL && hasFile:
-		return nil, "Provide only one: a URL or a CSV file, not both."
-	case hasURL:
-		if matches := pcppListRe.FindStringSubmatch(rawURL); matches != nil {
-			return matches, ""
-		}
-		return nil, "Not a valid PCPartPicker list URL."
-	}
-	return nil, ""
-}
-
-// importFromURL fetches parts from a PCPartPicker URL (CSV export first, then HTML fallback).
-func (h *Handler) importFromURL(ctx context.Context, rawURL string, matches []string) ([]csvRow, error) {
-	pathType := matches[1]
-	listID := matches[2]
-
-	// Try the CSV export first.
-	exportURL := "https://" + pcppHost + "/" + pathType + "/" + listID + "/export"
-	exportData, exportStatus, err := fetchPCPP(ctx, exportURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch PCPartPicker: %w", err)
-	}
-
-	if exportStatus == http.StatusOK {
-		rows, err := parseCSVToRows(csv.NewReader(bytes.NewReader(exportData)))
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse CSV: %w", err)
-		}
-		return rows, nil
-	}
-
-	// CSV export unavailable (e.g. build guides) — parse the page HTML.
-	rows, err := fetchAndParseHTML(ctx, rawURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse page: %w", err)
-	}
-	return rows, nil
 }
 
 // parsePrice strips currency symbols and commas, then parses a float.
@@ -388,149 +328,18 @@ func parseCSVToRows(r *csv.Reader) ([]csvRow, error) {
 	return rows, nil
 }
 
-// parsePartlistHTML extracts parts from a PCPartPicker page's partlist table.
-// ponytail: walks the DOM tree; O(n) on page size, fine for a single parts list.
-func parsePartlistHTML(data []byte) ([]csvRow, error) {
-	root, err := html.Parse(bytes.NewReader(data))
-	if err != nil {
-		return nil, fmt.Errorf("parse HTML: %w", err)
-	}
-
-	// Find the partlist table.
-	table := findPartlistTable(root)
-	if table == nil {
-		return nil, nil
-	}
-
-	// Collect all <tr> descendants (they may be nested under <tbody>).
-	var trs []*html.Node
-	collectTRs(table, &trs)
-
-	return processRows(trs), nil
-}
-
-// processRows walks table rows, tracking categories and extracting parts.
-func processRows(trs []*html.Node) []csvRow {
-	var rows []csvRow
-	currentCategory := ""
-
-	for _, tr := range trs {
-		// Check for category row.
-		if td := childByClass(tr, "td__component"); td != nil {
-			if h4 := childByTag(td, "h4"); h4 != nil {
-				currentCategory = extractText(h4)
-			}
-			continue
-		}
-
-		// Check for product row (has td__name).
-		row := extractProductRow(tr, currentCategory)
-		if row != nil {
-			rows = append(rows, *row)
-		}
-	}
-	return rows
-}
-
-// extractProductRow extracts a product row from a <tr> if it has td__name.
-func extractProductRow(tr *html.Node, category string) *csvRow {
-	td := childByClass(tr, "td__name")
-	if td == nil {
-		return nil
-	}
-
-	var name, priceStr string
-	if a := childByTag(td, "a"); a != nil {
-		name = extractText(a)
-	}
-	if p := childByClass(td, "td__price"); p != nil {
-		priceStr = extractText(p)
-	}
-	if name == "" {
-		return nil
-	}
-
-	row := &csvRow{
-		name:     name,
-		category: category,
-	}
-	if p, ok := parsePrice(priceStr); ok {
-		row.price = p
-		row.hasPrice = true
-	}
-	return row
-}
-
-// collectTRs recursively collects all <tr> descendants of n.
-func collectTRs(n *html.Node, out *[]*html.Node) {
-	if n.Type == html.ElementNode && n.Data == "tr" {
-		*out = append(*out, n)
-		return
-	}
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		collectTRs(c, out)
-	}
-}
-
-// findPartlistTable finds the first <table class="partlist ..."> node.
-func findPartlistTable(n *html.Node) *html.Node {
-	if n.Type == html.ElementNode && n.Data == "table" {
-		for _, attr := range n.Attr {
-			if attr.Key == "class" && strings.Contains(attr.Val, "partlist") {
-				return n
-			}
-		}
-	}
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if found := findPartlistTable(c); found != nil {
-			return found
-		}
-	}
-	return nil
-}
-
-// childByTag returns the first child of n with the given tag name.
-func childByTag(n *html.Node, tag string) *html.Node {
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == html.ElementNode && c.Data == tag {
-			return c
-		}
-	}
-	return nil
-}
-
-// childByClass returns the first child of n whose class attribute contains cls.
-func childByClass(n *html.Node, cls string) *html.Node {
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if c.Type == html.ElementNode {
-			for _, attr := range c.Attr {
-				if attr.Key == "class" && strings.Contains(attr.Val, cls) {
-					return c
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// extractText returns the concatenated text content of a node.
-func extractText(n *html.Node) string {
-	var buf strings.Builder
-	var walk func(*html.Node)
-	walk = func(node *html.Node) {
-		if node.Type == html.TextNode {
-			buf.WriteString(node.Data)
-		}
-		for c := node.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(n)
-	return strings.TrimSpace(buf.String())
+// priceSource is where an import's prices came from: a PCPartPicker list
+// and when it was pasted. It's the zero value for a CSV upload, whose
+// prices can't be refreshed.
+type priceSource struct {
+	url       string
+	checkedAt time.Time
 }
 
 // rowToCreateParams converts a csvRow to db.CreatePartParams.
-func rowToCreateParams(r csvRow, ownerID int64, slotID sql.NullInt64, status string) db.CreatePartParams {
+func rowToCreateParams(
+	r csvRow, ownerID int64, slotID sql.NullInt64, status string, source priceSource,
+) db.CreatePartParams {
 	p := db.CreatePartParams{
 		OwnerID: ownerID,
 		SlotID:  slotID,
@@ -546,73 +355,11 @@ func rowToCreateParams(r csvRow, ownerID int64, slotID sql.NullInt64, status str
 	if r.merchant != "" {
 		p.PurchasedFrom = sql.NullString{String: r.merchant, Valid: true}
 	}
+	if source.url != "" {
+		p.SourceUrl = sql.NullString{String: source.url, Valid: true}
+		if r.hasPrice {
+			p.PriceCheckedAt = sql.NullTime{Time: source.checkedAt, Valid: true}
+		}
+	}
 	return p
-}
-
-// pcppListRe matches pcpartpicker.com list and build URLs (/list/ and /b/).
-// Group 1 = path type ("list" or "b"), group 2 = list/build ID.
-var pcppListRe = regexp.MustCompile(`^https?://(?:www\.)?pcpartpicker\.com/(list|b)/([a-zA-Z0-9_-]+)`)
-
-// isPCPPHost reports whether u is an http(s) URL on pcpartpicker.com.
-func isPCPPHost(u *url.URL) bool {
-	return (u.Scheme == "https" || u.Scheme == "http") &&
-		(u.Host == pcppHost || u.Host == "www."+pcppHost)
-}
-
-// checkPCPPRedirect keeps redirects on pcpartpicker.com, so the host allowlist
-// in fetchPCPP can't be bypassed by a redirect elsewhere.
-func checkPCPPRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= maxPCPPRedirects {
-		return fmt.Errorf("stopped after %d redirects", maxPCPPRedirects)
-	}
-	if !isPCPPHost(req.URL) {
-		return fmt.Errorf("redirect to %s not allowed", req.URL.Redacted())
-	}
-	return nil
-}
-
-// fetchPCPP fetches a PCPartPicker URL and returns the body bytes and status
-// code. The host is allowlisted (including across redirects) as an SSRF
-// guard, and the body is capped at maxPCPPBody.
-func fetchPCPP(ctx context.Context, rawURL string) ([]byte, int, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil || !isPCPPHost(u) {
-		return nil, 0, errors.New("URL must point to " + pcppHost)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil) //nolint:gosec // G704: host allowlisted
-	if err != nil {
-		return nil, 0, fmt.Errorf("build request: %w", err)
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Racket/1.0)")
-	resp, err := pcppClient.Do(req) //nolint:gosec // G704: request built from allowlisted URL
-	if err != nil {
-		return nil, 0, fmt.Errorf("fetch: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Read one byte past the cap to tell "exactly at the limit" from "too big".
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPCPPBody+1))
-	if err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)
-	}
-	if len(body) > maxPCPPBody {
-		return nil, resp.StatusCode, fmt.Errorf("response larger than %d bytes", maxPCPPBody)
-	}
-	return body, resp.StatusCode, nil
-}
-
-// fetchAndParseHTML fetches a PCPartPicker page and parses its partlist table.
-func fetchAndParseHTML(ctx context.Context, rawURL string) ([]csvRow, error) {
-	pageData, pageStatus, err := fetchPCPP(ctx, rawURL)
-	if err != nil {
-		return nil, fmt.Errorf("fetch PCPartPicker page: %w", err)
-	}
-	if pageStatus != http.StatusOK {
-		return nil, fmt.Errorf("PCPartPicker returned %d", pageStatus)
-	}
-	rows, err := parsePartlistHTML(pageData)
-	if err != nil {
-		return nil, fmt.Errorf("parse parts list: %w", err)
-	}
-	return rows, nil
 }

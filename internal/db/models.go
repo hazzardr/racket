@@ -34,25 +34,29 @@ type MachineSlot struct {
 }
 
 type Part struct {
-	ID              int64
-	OwnerID         int64
-	SlotID          sql.NullInt64
-	Status          string
-	Name            string
-	Category        sql.NullString
-	Manufacturer    sql.NullString
-	Model           sql.NullString
-	SerialNumber    sql.NullString
-	PriceCents      sql.NullInt64
-	Currency        string
-	PurchasedOn     sql.NullTime
-	PurchasedFrom   sql.NullString
-	WarrantyExpires sql.NullTime
-	ProductUrl      sql.NullString
-	GuideUrl        sql.NullString
-	Notes           sql.NullString
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                  int64
+	OwnerID             int64
+	SlotID              sql.NullInt64
+	Status              string
+	Name                string
+	Category            sql.NullString
+	Manufacturer        sql.NullString
+	Model               sql.NullString
+	SerialNumber        sql.NullString
+	PriceCents          sql.NullInt64
+	Currency            string
+	PurchasedOn         sql.NullTime
+	PurchasedFrom       sql.NullString
+	WarrantyExpires     sql.NullTime
+	ProductUrl          sql.NullString
+	GuideUrl            sql.NullString
+	Notes               sql.NullString
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	SourceUrl           sql.NullString
+	PriceCheckedAt      sql.NullTime
+	PreviousPriceCents  sql.NullInt64
+	MissingFromSourceAt sql.NullTime
 }
 
 type Rack struct {
