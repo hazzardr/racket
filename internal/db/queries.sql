@@ -122,6 +122,25 @@ LEFT JOIN users ON users.id = parts.owner_id
 WHERE machine_slots.machine_id = ?
 ORDER BY machine_slots.position, machine_slots.id;
 
+-- name: ListSlotStates :many
+-- Every slot of every machine whose owner hasn't left, with part_source as
+-- ListSlotsByMachine labels it, for the machine list's slot LEDs.
+SELECT machine_slots.machine_id, machine_slots.category,
+       CASE
+         WHEN parts.id IS NULL THEN 'empty'
+         WHEN parts.status = 'wanted' THEN 'unpurchased'
+         WHEN parts.owner_id = machines.owner_id THEN 'own'
+         WHEN users.deleted_at IS NOT NULL THEN 'former_member'
+         ELSE 'borrowed'
+       END AS part_source
+FROM machine_slots
+JOIN machines ON machines.id = machine_slots.machine_id
+JOIN users AS owners ON owners.id = machines.owner_id
+LEFT JOIN parts ON parts.slot_id = machine_slots.id
+LEFT JOIN users ON users.id = parts.owner_id
+WHERE owners.deleted_at IS NULL
+ORDER BY machine_slots.machine_id, machine_slots.position, machine_slots.id;
+
 -- Parts ---------------------------------------------------------------------
 
 -- name: CreatePart :one

@@ -6,9 +6,11 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"html/template"
 	"mime/multipart"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +30,25 @@ type importPage struct {
 	MachineName string
 	PCPPText    string
 	Wanted      bool
+	// Renames are the PCPartPicker types that land in a differently named
+	// slot, shown so the slot names aren't a surprise.
+	Renames []slotRename
+}
+
+// slotRename is one pcppSlotCategories entry, for the import page.
+type slotRename struct {
+	From  string
+	To    string
+	Style template.CSS
+}
+
+func newImportPage() importPage {
+	var page importPage
+	for from, to := range pcppSlotCategories {
+		page.Renames = append(page.Renames, slotRename{From: from, To: to, Style: typeStyle(to)})
+	}
+	slices.SortFunc(page.Renames, func(a, b slotRename) int { return strings.Compare(a.From, b.From) })
+	return page
 }
 
 // pcppSlotCategories maps PCPartPicker part types to the slot names new
@@ -45,7 +66,7 @@ const otherSlot = "Other"
 
 // ImportPage renders GET /import.
 func (h *Handler) ImportPage(w http.ResponseWriter, r *http.Request) {
-	h.render(w, r, http.StatusOK, "import.html", importPage{})
+	h.render(w, r, http.StatusOK, "import.html", newImportPage())
 }
 
 // Import handles POST /import: accepts a pasted PCPartPicker list (its
@@ -236,12 +257,12 @@ const noPartsInPaste = "Racket couldn't find any parts in that text. " +
 // renderImportError re-renders the import page (400) with the error and the
 // user's prior input so they can retry.
 func (h *Handler) renderImportError(w http.ResponseWriter, r *http.Request, machineName, pcppText, msg string) {
-	h.render(w, r, http.StatusBadRequest, "import.html", importPage{
-		Error:       msg,
-		MachineName: machineName,
-		PCPPText:    pcppText,
-		Wanted:      r.FormValue("wanted") != "",
-	})
+	page := newImportPage()
+	page.Error = msg
+	page.MachineName = machineName
+	page.PCPPText = pcppText
+	page.Wanted = r.FormValue("wanted") != ""
+	h.render(w, r, http.StatusBadRequest, "import.html", page)
 }
 
 // parsePrice strips currency symbols and commas, then parses a float.

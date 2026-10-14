@@ -200,19 +200,24 @@ body {
   color: var(--color-text-muted);
 }
 
-.form input {
+.form input,
+.form select,
+.form textarea {
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 0.375rem;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
   padding: 0.5rem 0.75rem;
   color: var(--color-text);
   font-size: 0.9375rem;
   font-family: inherit;
 }
 
-.form input:focus {
+.form input:focus,
+.form select:focus,
+.form textarea:focus {
   outline: none;
   border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
 
 .form-actions {
@@ -223,13 +228,6 @@ body {
 }
 
 /* Sections, cards, status */
-
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1.5rem;
-}
 
 .section-title {
   font-size: 1.5rem;
@@ -245,24 +243,11 @@ body {
   color: var(--color-danger);
 }
 
-.machine-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 1.5rem;
-  padding-bottom: 3rem;
-}
-
 .card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 0.5rem;
   padding: 1.5rem;
-}
-
-.card-link {
-  text-decoration: none;
-  color: inherit;
-  display: block;
 }
 
 .card h2 {
@@ -308,26 +293,25 @@ body {
   font-size: 0.875rem;
 }
 
-.form select {
-  padding: 0.5rem;
-  border: 1px solid var(--color-border);
-  border-radius: 0.25rem;
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-family: inherit;
-}
-
 .badge {
-  border-radius: 999px;
-  padding: 0.0625rem 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 500;
-  border: 1px solid var(--color-border);
+  display: inline-block;
+  padding: 4px 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
   color: var(--color-text-muted);
+  font: 500 0.6875rem/1 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
 }
 
-.machine-mine {
-  border-left: 3px solid var(--color-accent);
+.badge-planned {
+  border-color: color-mix(in srgb, var(--wanted) 45%, transparent);
+  color: var(--wanted);
+}
+
+.badge-retired {
+  color: var(--dim);
 }
 
 /* Header sign-in state */
@@ -374,23 +358,6 @@ body {
   margin-top: 2rem;
   padding-top: 1.5rem;
   border-top: 1px dashed var(--color-border);
-}
-
-/* New machine page */
-
-.new-machine-layout {
-  display: grid;
-  gap: 2rem;
-}
-
-@media (min-width: 768px) {
-  .new-machine-layout {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-.new-machine-layout .form {
-  max-width: none;
 }
 
 .external-link {
@@ -490,25 +457,6 @@ body {
 
 /* htmx-era additions */
 
-.machine-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  padding-bottom: 3rem;
-}
-
-.machine-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.machine-row .card-link {
-  flex: 1;
-}
-
 .meta {
   color: var(--color-text-muted);
   font-size: 0.875rem;
@@ -532,23 +480,6 @@ body {
 
 .btn-danger:hover {
   border-color: var(--color-danger);
-}
-
-.import-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 2rem;
-}
-
-@media (min-width: 768px) {
-  .import-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-.import-grid .form {
-  max-width: none;
-  margin-top: 1rem;
 }
 
 .error {
@@ -752,21 +683,9 @@ body {
   margin-top: 0;
 }
 
-.list-heading {
-  color: var(--color-text-muted);
-  font-size: 0.875rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  margin-bottom: 0.75rem;
-}
-
-.machine-list + .list-heading {
-  margin-top: -1rem;
-}
-
 .section-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
 }
@@ -774,20 +693,8 @@ body {
 /* Pasted PCPartPicker lists */
 
 .form textarea {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 0.375rem;
-  padding: 0.5rem 0.75rem;
-  color: var(--color-text);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.8125rem;
-  line-height: 1.5;
+  font: 0.8125rem/1.55 var(--mono);
   resize: vertical;
-}
-
-.form textarea:focus {
-  outline: none;
-  border-color: var(--color-accent);
 }
 
 .price-update {
@@ -1797,4 +1704,468 @@ body {
   .drag-wire path {
     animation: none !important;
   }
+}
+
+/* Machine list, new machine, and import pages. They borrow the board's
+   pieces: mono labels, dotted-grid frames, chassis, and slot-colored lights. */
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem 1.5rem;
+  margin-bottom: 1.75rem;
+}
+
+.page-head .back-link {
+  display: inline-block;
+  margin-bottom: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.page-title {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+.page-lead {
+  max-width: 42rem;
+  margin-top: 0.5rem;
+  color: var(--color-text-muted);
+}
+
+.group-label,
+.eyebrow,
+.field-label,
+.mcard-stats dt {
+  display: block;
+  color: var(--dim);
+  font: 500 0.6875rem/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.group-label {
+  margin-bottom: 0.75rem;
+}
+
+.machine-grid + .group-label,
+.machine-empty + .group-label {
+  margin-top: 2.25rem;
+}
+
+.machines {
+  padding-bottom: 3rem;
+}
+
+/* Machine cards: a small chassis per machine. */
+
+.machine-grid {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 12px;
+}
+
+.mcard {
+  position: relative;
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--chassis-top), var(--bay) 75%);
+  box-shadow: 0 18px 40px -30px var(--shadow), inset 0 1px 0 var(--sheen);
+  transition: border-color 0.2s;
+}
+
+.mcard:hover,
+.mcard:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+
+.mcard-link {
+  display: grid;
+  gap: 12px;
+  height: 100%;
+  padding: 14px 16px 16px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.mcard-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.mcard-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.mcard-name {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.mcard-sub {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font: 0.75rem/1.4 var(--mono);
+}
+
+.mcard-desc {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+/* One light per slot: lit when filled, ringed when not bought yet, dark
+   when empty, in the slot's part-type color. */
+.mcard-leds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--board);
+}
+
+.mcard-leds i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tc, var(--dim));
+  box-shadow: 0 0 6px light-dark(transparent, color-mix(in srgb, var(--tc) 60%, transparent));
+}
+
+.mcard-leds .k-wanted {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--tc);
+}
+
+.mcard-leds .k-empty {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--dim);
+  opacity: 0.6;
+}
+
+.mcard .meter {
+  height: 4px;
+}
+
+.mcard-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+}
+
+.mcard.is-mine .mcard-stats {
+  padding-right: 4.5rem;
+}
+
+.mcard-stats dt {
+  margin-bottom: 5px;
+}
+
+.mcard-stats dd {
+  font: 500 0.9375rem/1.1 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.mcard-delete {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+}
+
+/* No machines yet: an empty slot, like the board's. */
+.machine-empty {
+  display: grid;
+  gap: 5px;
+  max-width: 360px;
+  padding: 14px 16px;
+  border: 1px dashed var(--line-2);
+  border-radius: 10px;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.2s;
+}
+
+.machine-empty:hover {
+  border-color: var(--color-accent);
+}
+
+.machine-empty .slot-cat {
+  color: var(--dim);
+}
+
+/* Panels and fields */
+
+.panel {
+  padding: 1.125rem 1.25rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--board) 70%, transparent);
+}
+
+.form.panel,
+.panel .form {
+  max-width: none;
+}
+
+.panel-head {
+  margin-bottom: 1rem;
+}
+
+.panel-head h3 {
+  font-size: 1.0625rem;
+  font-weight: 600;
+}
+
+.panel-note {
+  margin-top: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.form .field {
+  gap: 7px;
+}
+
+legend.field-label {
+  margin-bottom: 7px;
+  padding: 0;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  gap: 1rem;
+}
+
+.form .status {
+  padding: 0;
+}
+
+.form-actions-split {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+/* A segmented picker over radio buttons, like the board's Color by. */
+.seg-pick {
+  flex-wrap: wrap;
+}
+
+.form .seg-pick label {
+  position: relative;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 0.375rem 0.7rem;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.form .seg-pick input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.form .seg-pick label:has(input:checked) {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.form .seg-pick label:has(input:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.seg-pick .ch-icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* New machine: the form beside a preview chassis. */
+
+.new-machine {
+  padding-bottom: 3rem;
+}
+
+.nm-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .nm-layout {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  }
+
+  .nm-preview {
+    position: sticky;
+    top: 1.5rem;
+  }
+}
+
+.nm-preview {
+  display: grid;
+  gap: 0.625rem;
+}
+
+.nm-frame {
+  display: grid;
+  justify-items: center;
+  padding: 28px 20px;
+}
+
+.nm-frame .chassis {
+  grid-column: auto;
+  grid-row: auto;
+  width: min(100%, 300px);
+}
+
+.nm-bays {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.nm-note {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.nm-note a {
+  color: var(--color-accent);
+}
+
+/* Import */
+
+.import-page {
+  padding-bottom: 3rem;
+}
+
+.import-page > .status.error {
+  margin-bottom: 1rem;
+  padding: 0;
+}
+
+.import-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .import-grid {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  }
+}
+
+.import-side {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.25rem;
+}
+
+.form input[type="file"] {
+  min-width: 0;
+  padding: 0.375rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.form input[type="file"]::file-selector-button {
+  margin-right: 0.75rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.form textarea.paste {
+  min-height: 15rem;
+  background: var(--color-bg);
+}
+
+/* PCPartPicker types wired to the slots they land in. */
+.renames {
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  margin: 0.875rem 0;
+}
+
+.renames li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 0.75rem/1 var(--mono);
+}
+
+.rn-from,
+.rn-to {
+  padding: 5px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.rn-from {
+  border: 1px solid var(--line-2);
+  color: var(--color-text-muted);
+  text-transform: capitalize;
+}
+
+.rn-wire {
+  position: relative;
+  flex: 1;
+  min-width: 24px;
+  border-top: 2px dotted var(--tc);
+}
+
+.rn-wire::after {
+  content: "";
+  position: absolute;
+  top: -5px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tc);
+}
+
+.rn-to {
+  border: 1px solid color-mix(in srgb, var(--tc) 45%, transparent);
+  color: var(--tc);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }

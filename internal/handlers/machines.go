@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -56,6 +57,23 @@ type machinesPage struct {
 type machineRow struct {
 	db.ListMachinesRow
 	Mine bool
+	// LEDs are the machine's slots in board order, drawn as a strip of
+	// lights on its card. Counts tallies them by slot state.
+	LEDs   []slotLED
+	Counts map[string]int
+}
+
+// slotLED is one slot as a light on a machine card or a bay in the new
+// machine preview.
+type slotLED struct {
+	Category string
+	Code     string
+	State    string
+	Style    template.CSS
+}
+
+func newSlotLED(category, state string) slotLED {
+	return slotLED{Category: category, Code: styleOf(category).code, State: state, Style: typeStyle(category)}
 }
 
 // newMachinePage is the new-machine form state (also used for validation re-renders).
@@ -70,6 +88,22 @@ type newMachinePage struct {
 	PurchasedOn string
 	Kinds       []string
 	Statuses    []string
+	// Slots are the slots a new machine starts with, for the preview.
+	Slots []slotLED
+}
+
+// newMachineForm is the new-machine form's starting state.
+func newMachineForm() newMachinePage {
+	page := newMachinePage{
+		Kind:     machineKinds[0],
+		Status:   machineActive,
+		Kinds:    machineKinds,
+		Statuses: machineStatuses,
+	}
+	for _, category := range defaultSlots {
+		page.Slots = append(page.Slots, newSlotLED(category, stateEmpty))
+	}
+	return page
 }
 
 // landingPage is the landing page data: the slots a new machine starts with
@@ -116,24 +150,33 @@ func (h *Handler) MachinesPage(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
+	states, err := h.queries.ListSlotStates(r.Context())
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	leds := make(map[int64][]slotLED)
+	for _, s := range states {
+		leds[s.MachineID] = append(leds[s.MachineID], newSlotLED(s.Category, slotState(s.PartSource)))
+	}
 	var page machinesPage
 	for _, m := range machines {
+		row := machineRow{ListMachinesRow: m, LEDs: leds[m.Machine.ID], Counts: map[string]int{}}
+		for _, led := range row.LEDs {
+			row.Counts[led.State]++
+		}
 		if m.Machine.OwnerID == viewer(r).ID {
-			page.Mine = append(page.Mine, machineRow{ListMachinesRow: m, Mine: true})
+			row.Mine = true
+			page.Mine = append(page.Mine, row)
 		} else {
-			page.Others = append(page.Others, machineRow{ListMachinesRow: m})
+			page.Others = append(page.Others, row)
 		}
 	}
 	h.render(w, r, http.StatusOK, "machines.html", page)
 }
 
 func (h *Handler) NewMachinePage(w http.ResponseWriter, r *http.Request) {
-	h.render(w, r, http.StatusOK, "new_machine.html", newMachinePage{
-		Kind:     machineKinds[0],
-		Status:   machineActive,
-		Kinds:    machineKinds,
-		Statuses: machineStatuses,
-	})
+	h.render(w, r, http.StatusOK, "new_machine.html", newMachineForm())
 }
 
 // getMachine fetches a machine whose owner hasn't left, or renders the error
@@ -197,23 +240,18 @@ func (h *Handler) CreateMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page := newMachinePage{
-		Name:        strings.TrimSpace(r.FormValue("name")),
-		Kind:        r.FormValue("kind"),
-		Status:      r.FormValue("status"),
-		Description: strings.TrimSpace(r.FormValue("description")),
-		Location:    strings.TrimSpace(r.FormValue("location")),
-		BuiltOn:     r.FormValue("built_on"),
-		PurchasedOn: r.FormValue("purchased_on"),
-		Kinds:       machineKinds,
-		Statuses:    machineStatuses,
+	page := newMachineForm()
+	page.Name = strings.TrimSpace(r.FormValue("name"))
+	if kind := r.FormValue("kind"); kind != "" {
+		page.Kind = kind
 	}
-	if page.Kind == "" {
-		page.Kind = machineKinds[0]
+	if status := r.FormValue("status"); status != "" {
+		page.Status = status
 	}
-	if page.Status == "" {
-		page.Status = machineActive
-	}
+	page.Description = strings.TrimSpace(r.FormValue("description"))
+	page.Location = strings.TrimSpace(r.FormValue("location"))
+	page.BuiltOn = r.FormValue("built_on")
+	page.PurchasedOn = r.FormValue("purchased_on")
 	switch {
 	case page.Name == "":
 		page.Error = "Name is required."

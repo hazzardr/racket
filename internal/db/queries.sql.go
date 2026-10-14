@@ -595,6 +595,55 @@ func (q *Queries) ListRefreshableParts(ctx context.Context, arg ListRefreshableP
 	return items, nil
 }
 
+const listSlotStates = `-- name: ListSlotStates :many
+SELECT machine_slots.machine_id, machine_slots.category,
+       CASE
+         WHEN parts.id IS NULL THEN 'empty'
+         WHEN parts.status = 'wanted' THEN 'unpurchased'
+         WHEN parts.owner_id = machines.owner_id THEN 'own'
+         WHEN users.deleted_at IS NOT NULL THEN 'former_member'
+         ELSE 'borrowed'
+       END AS part_source
+FROM machine_slots
+JOIN machines ON machines.id = machine_slots.machine_id
+JOIN users AS owners ON owners.id = machines.owner_id
+LEFT JOIN parts ON parts.slot_id = machine_slots.id
+LEFT JOIN users ON users.id = parts.owner_id
+WHERE owners.deleted_at IS NULL
+ORDER BY machine_slots.machine_id, machine_slots.position, machine_slots.id
+`
+
+type ListSlotStatesRow struct {
+	MachineID  int64
+	Category   string
+	PartSource string
+}
+
+// Every slot of every machine whose owner hasn't left, with part_source as
+// ListSlotsByMachine labels it, for the machine list's slot LEDs.
+func (q *Queries) ListSlotStates(ctx context.Context) ([]ListSlotStatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSlotStates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSlotStatesRow
+	for rows.Next() {
+		var i ListSlotStatesRow
+		if err := rows.Scan(&i.MachineID, &i.Category, &i.PartSource); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSlotsByMachine = `-- name: ListSlotsByMachine :many
 SELECT machine_slots.id, machine_slots.machine_id, machine_slots.category,
        parts.id AS part_id, parts.name AS part_name, parts.model AS part_model,
