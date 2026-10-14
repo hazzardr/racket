@@ -1,32 +1,84 @@
 {{template "page_top" .}}
-  <section>
-    <h2 class="section-title">New machine</h2>
-    <form class="form" method="post" action="/machines">
-      <label>
-        Name
-        <input name="name" type="text" value="{{.Name}}" required>
-      </label>
-      <label>
-        Description
-        <input name="description" type="text" value="{{.Description}}">
-      </label>
-      <label>
-        Location
-        <input name="location" type="text" value="{{.Location}}">
-      </label>
-      <label>
-        Build date
-        <input name="built_on" type="date" value="{{.BuiltOn}}">
-      </label>
-      <label>
-        Purchase date
-        <input name="purchased_on" type="date" value="{{.PurchasedOn}}">
-      </label>
-      {{if .Error}}<div class="status error">{{.Error}}</div>{{end}}
-      <div class="form-actions">
-        <button type="submit" class="btn">Save machine</button>
-        <a href="/machines" class="btn-secondary">Cancel</a>
+{{with .Data}}
+  <section class="new-machine" data-new-machine>
+    <div class="page-head">
+      <div>
+        <a href="/machines" class="back-link">&larr; Machines</a>
+        <h2 class="page-title">New machine</h2>
       </div>
-    </form>
+    </div>
+    <div class="nm-layout">
+      <form class="panel form nm-form" method="post" action="/machines">
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input name="name" type="text" value="{{.Name}}" placeholder="Living room PC" required>
+        </label>
+        <fieldset class="field">
+          <legend class="field-label">Kind</legend>
+          <div class="seg seg-pick">
+            {{$kind := .Kind}}
+            {{range .Kinds}}<label><input type="radio" name="kind" value="{{.}}"{{if eq . $kind}} checked{{end}}>{{template "kind_icon" .}}<span>{{.}}</span></label>{{end}}
+          </div>
+        </fieldset>
+        <fieldset class="field">
+          <legend class="field-label">Status</legend>
+          <div class="seg seg-pick">
+            {{$status := .Status}}
+            {{range .Statuses}}<label><input type="radio" name="status" value="{{.}}"{{if eq . $status}} checked{{end}}><span>{{.}}</span></label>{{end}}
+          </div>
+        </fieldset>
+        <label class="field">
+          <span class="field-label">Description</span>
+          <input name="description" type="text" value="{{.Description}}">
+        </label>
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">Location</span>
+            <input name="location" type="text" value="{{.Location}}" placeholder="The closet counts">
+          </label>
+          <label class="field">
+            <span class="field-label">Build date</span>
+            <input name="built_on" type="date" value="{{.BuiltOn}}">
+          </label>
+          <label class="field">
+            <span class="field-label">Purchase date</span>
+            <input name="purchased_on" type="date" value="{{.PurchasedOn}}">
+          </label>
+        </div>
+        {{if .Error}}<div class="status error" role="alert">{{.Error}}</div>{{end}}
+        <div class="form-actions">
+          <button type="submit" class="btn">Save machine</button>
+          <a href="/machines" class="btn btn-secondary">Cancel</a>
+        </div>
+      </form>
+
+      {{/* What the machine will look like: new_machine.js keeps the name,
+           kind, and status in step with the form. */}}
+      <aside class="nm-preview" aria-label="Preview">
+        <span class="eyebrow">Preview</span>
+        <div class="board-frame nm-frame">
+          <div class="chassis">
+            <div class="ch-head">
+              {{range .Kinds}}<span class="nm-icon" data-kind-icon="{{.}}"{{if ne . $kind}} hidden{{end}}>{{template "kind_icon" .}}</span>{{end}}
+              <div>
+                <div class="ch-name" data-preview-name>{{or .Name "New machine"}}</div>
+                <div class="ch-sub"><span data-preview-kind>{{.Kind}}</span> · <span data-preview-status>{{.Status}}</span></div>
+              </div>
+            </div>
+            <div class="vents"></div>
+            <div class="nm-bays">
+              {{range .Slots}}<div class="bay k-{{.State}}" style="{{.Style}}" title="{{.Category}}"><i class="led"></i><span>{{.Code}}</span></div>{{end}}
+            </div>
+            <div class="ch-foot"><span>0 of {{len .Slots}} slots filled</span><span>yours</span></div>
+          </div>
+        </div>
+        <p class="nm-note">
+          It starts with these empty slots. Once it's saved you can add parts,
+          add or remove slots, or <a href="/import">import a PCPartPicker list</a> to fill them.
+        </p>
+      </aside>
+    </div>
   </section>
+  <script src="/static/new_machine.js" defer></script>
+{{end}}
 {{template "page_bottom" .}}

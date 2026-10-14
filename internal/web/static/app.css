@@ -1,13 +1,50 @@
 /* Racket global styles — extracted from the Vue SPA <style> blocks. */
 
 :root {
+  /* Colors follow the system's light or dark setting unless the viewer
+     picks one (theme.js sets data-theme). Each token is
+     light-dark(light value, dark value). */
+  color-scheme: light dark;
+  --color-bg: light-dark(#f5f7fb, #070b14);
+  --color-surface: light-dark(#ffffff, #0e1628);
+  --color-border: light-dark(#d8dfeb, #1f2b43);
+  --color-text: light-dark(#111827, #e6edf7);
+  --color-text-muted: light-dark(#4b5870, #9aa8c2);
+  --color-accent: light-dark(#2f66d8, #7aa7ff);
+  --color-borrowed: light-dark(#c2530a, #fb923c);
+  --color-danger: light-dark(#d02f2f, #f87171);
+
+  /* Machine board */
+  --board: light-dark(#edf1f7, #0a1020);
+  --bay: light-dark(#f7f9fc, #0b1222);
+  --chassis-top: light-dark(#ffffff, #111b31);
+  --glass: light-dark(rgba(255, 255, 255, 0.96), rgba(10, 15, 28, 0.92));
+  --line: light-dark(rgba(30, 45, 80, 0.13), rgba(148, 163, 196, 0.13));
+  --line-2: light-dark(rgba(30, 45, 80, 0.25), rgba(148, 163, 196, 0.26));
+  --grid: light-dark(rgba(30, 45, 80, 0.13), rgba(148, 163, 196, 0.09));
+  --vent: light-dark(rgba(30, 45, 80, 0.14), rgba(148, 163, 196, 0.16));
+  --shadow: light-dark(rgba(15, 23, 42, 0.18), var(--shadow));
+  --sheen: light-dark(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.04));
+  --dim: light-dark(#7a869c, #5f6d88);
+  --owned: light-dark(#15a34a, #4ade80);
+  --wanted: light-dark(#2f66d8, #8ab4ff);
+  --borrowed: light-dark(#e2620b, #fb923c);
+  --empty: light-dark(#8b96aa, #5f6d88);
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
   color-scheme: dark;
-  --color-bg: #0f1117;
-  --color-surface: #1a1d27;
-  --color-border: #2a2e3d;
-  --color-text: #e4e6eb;
-  --color-text-muted: #9ca0b0;
-  --color-accent: #6ea8fe;
+}
+
+/* --tc is an element's part-type color (--type, from board.go), darkened
+   on light backgrounds, where the pastels would wash out. */
+[style*="--type"] {
+  --tc: light-dark(color-mix(in oklab, var(--type) 68%, #1e293b), var(--type));
 }
 
 * {
@@ -24,7 +61,7 @@ body {
 }
 
 .container {
-  max-width: 1100px;
+  max-width: 1200px;
   margin: 0 auto;
   padding: 0 1.5rem;
 }
@@ -39,8 +76,10 @@ body {
 
 .header-inner {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
+  gap: 0.75rem 1.25rem;
 }
 
 .home {
@@ -74,7 +113,8 @@ body {
 
 .nav {
   display: flex;
-  gap: 1.25rem;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
 }
 
 .nav a {
@@ -123,6 +163,20 @@ body {
   color: var(--color-text);
 }
 
+.btn.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.btn.btn-secondary:hover {
+  border-color: var(--color-text-muted);
+}
+
+.btn-small.btn-secondary {
+  padding: 0.375rem 0.75rem;
+}
+
 .btn-small {
   padding: 0.375rem 0.75rem;
   font-size: 0.875rem;
@@ -146,19 +200,24 @@ body {
   color: var(--color-text-muted);
 }
 
-.form input {
+.form input,
+.form select,
+.form textarea {
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 0.375rem;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
   padding: 0.5rem 0.75rem;
   color: var(--color-text);
   font-size: 0.9375rem;
   font-family: inherit;
 }
 
-.form input:focus {
+.form input:focus,
+.form select:focus,
+.form textarea:focus {
   outline: none;
   border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
 
 .form-actions {
@@ -169,13 +228,6 @@ body {
 }
 
 /* Sections, cards, status */
-
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 1.5rem;
-}
 
 .section-title {
   font-size: 1.5rem;
@@ -188,14 +240,7 @@ body {
 }
 
 .status.error {
-  color: #f87171;
-}
-
-.machine-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 1.5rem;
-  padding-bottom: 3rem;
+  color: var(--color-danger);
 }
 
 .card {
@@ -203,12 +248,6 @@ body {
   border: 1px solid var(--color-border);
   border-radius: 0.5rem;
   padding: 1.5rem;
-}
-
-.card-link {
-  text-decoration: none;
-  color: inherit;
-  display: block;
 }
 
 .card h2 {
@@ -244,122 +283,81 @@ body {
   margin-top: 0.25rem;
 }
 
-.slots-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1rem;
-  padding-bottom: 2rem;
-}
-
-.slot-header {
+.form .checkbox,
+.pn-form .checkbox {
   display: flex;
+  flex-direction: row;
   align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
+  gap: 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
 }
 
-.slot-header h3 {
-  font-size: 1rem;
-  margin: 0;
+.badge {
+  display: inline-block;
+  padding: 4px 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  font: 500 0.6875rem/1 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
 }
 
-.btn-remove-slot {
+.badge-planned {
+  border-color: color-mix(in srgb, var(--wanted) 45%, transparent);
+  color: var(--wanted);
+}
+
+.badge-retired {
+  color: var(--dim);
+}
+
+/* Header sign-in state */
+
+.nav {
+  align-items: center;
+}
+
+/* The theme picker sits in the nav, smaller than the board's toggles. */
+.seg.theme-seg {
+  padding: 2px;
+  border-radius: 8px;
+}
+
+.seg.theme-seg button {
+  padding: 0.25rem 0.55rem;
+  font-size: 0.75rem;
+}
+
+.nav-user {
+  color: var(--color-text);
+  font-size: 0.9375rem;
+}
+
+.btn-link {
   background: none;
   border: none;
   color: var(--color-text-muted);
-  font-size: 1.25rem;
-  line-height: 1;
+  font: inherit;
+  font-size: 0.9375rem;
   cursor: pointer;
-  padding: 0.125rem 0.375rem;
-  border-radius: 0.25rem;
-}
-
-.btn-remove-slot:hover {
-  color: var(--color-text);
-}
-
-.add-slot-card {
-  border-style: dashed;
-}
-
-.slot-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.375rem;
-  margin-bottom: 0.75rem;
-}
-
-.slot-part {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.part-name {
-  font-weight: 500;
-}
-
-.part-model {
-  color: var(--color-text-muted);
-  font-size: 0.875rem;
-}
-
-.slot-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.slot-form input {
-  padding: 0.5rem;
-  border: 1px solid var(--color-border);
-  border-radius: 0.25rem;
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-size: 0.875rem;
-}
-
-.other-parts {
-  margin-top: 1rem;
-}
-
-.other-parts h3 {
-  font-size: 1.125rem;
-  margin-bottom: 0.75rem;
-}
-
-.other-parts ul {
-  list-style: none;
   padding: 0;
 }
 
-.other-parts li {
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--color-border);
+.btn-link:hover {
+  color: var(--color-text);
 }
 
-.part-category {
-  color: var(--color-text-muted);
-  font-size: 0.875rem;
-  margin-left: 0.5rem;
+.login .btn {
+  margin-top: 0.5rem;
 }
 
-/* New machine page */
-
-.new-machine-layout {
-  display: grid;
-  gap: 2rem;
-}
-
-@media (min-width: 768px) {
-  .new-machine-layout {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-.new-machine-layout .form {
-  max-width: none;
+.dev-login {
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px dashed var(--color-border);
 }
 
 .external-link {
@@ -379,15 +377,28 @@ body {
 
 /* Landing page */
 
+.landing {
+  display: grid;
+  gap: 3rem;
+  padding-bottom: 4rem;
+}
+
 .hero {
-  margin-bottom: 4rem;
+  padding: 2.75rem 2rem 2.5rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background-color: var(--board);
+  background-image: radial-gradient(var(--grid) 1px, transparent 1.3px);
+  background-size: 18px 18px;
 }
 
 .hero-title {
-  font-size: 2rem;
-  font-weight: 700;
-  letter-spacing: -0.025em;
   margin-bottom: 1rem;
+  font-size: clamp(1.75rem, 4vw, 2.5rem);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  text-wrap: balance;
 }
 
 .lead {
@@ -397,22 +408,46 @@ body {
   margin-bottom: 2.5rem;
 }
 
+.hero .lead {
+  margin-bottom: 1.75rem;
+}
+
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+/* The feature cards look like the board's slot cards. */
 .feature-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  gap: 12px;
 }
 
 .feature-card {
+  padding: 14px 16px 16px;
+  border: 1px solid color-mix(in srgb, var(--tc) 32%, transparent);
+  border-radius: 10px;
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
-  padding: 1.5rem;
 }
 
 .feature-card h3 {
-  font-size: 1.125rem;
-  margin-bottom: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--tc);
+  font: 600 0.75rem/1.2 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.feature-card h3 i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tc);
 }
 
 .feature-card p {
@@ -421,37 +456,6 @@ body {
 }
 
 /* htmx-era additions */
-
-.cta {
-  margin-bottom: 2.5rem;
-}
-
-.discreet {
-  font-size: 0.875rem;
-}
-
-.discreet a {
-  color: var(--color-text-muted);
-}
-
-.machine-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  padding-bottom: 3rem;
-}
-
-.machine-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.machine-row .card-link {
-  flex: 1;
-}
 
 .meta {
   color: var(--color-text-muted);
@@ -467,7 +471,7 @@ body {
   background: none;
   border: 1px solid var(--color-border);
   border-radius: 0.375rem;
-  color: #f87171;
+  color: var(--color-danger);
   padding: 0.375rem 0.75rem;
   font-size: 0.875rem;
   cursor: pointer;
@@ -475,27 +479,1693 @@ body {
 }
 
 .btn-danger:hover {
-  border-color: #f87171;
+  border-color: var(--color-danger);
+}
+
+.error {
+  color: var(--color-danger);
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+}
+
+/* Landing page import demo (demo.js): a sample list imported into a
+   machine board, drawn by board.js like the machine page's. */
+
+.demo {
+  display: grid;
+  gap: 1rem;
+}
+
+.demo [hidden] {
+  display: none !important;
+}
+
+.demo-title {
+  margin-bottom: 0.25rem;
+  font-size: 1.5rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.demo-intro p {
+  color: var(--color-text-muted);
+  max-width: 42rem;
+}
+
+.demo-import {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.25rem 1.5rem;
+  padding: 1rem 1.125rem 1.125rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--board) 70%, transparent);
+}
+
+@media (min-width: 900px) {
+  .demo-import {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  }
+
+  /* The pasted list runs as tall as the parts found beside it. */
+  .demo-form,
+  .demo-url {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .demo-url {
+    flex: 1;
+  }
+
+  .demo-url .demo-paste {
+    flex: 1;
+    max-height: none;
+  }
+}
+
+.demo-label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--dim);
+  font: 500 0.6875rem/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.demo-paste {
+  max-height: 11rem;
+  overflow: auto;
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font: 0.75rem/1.55 var(--mono);
+  white-space: pre;
+}
+
+.demo-import-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.demo .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.demo-import-row .btn-small {
+  align-self: auto;
+}
+
+.demo-rows {
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.demo-row {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr) auto;
+  gap: 0.125rem 0.75rem;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--color-bg);
+  font-size: 0.8125rem;
+  transition: border-color 0.2s, opacity 0.3s;
+}
+
+.demo-row-type {
+  overflow: hidden;
+  color: var(--tc, var(--color-text-muted));
+  font: 500 0.6875rem/1.9 var(--mono);
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.demo-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.demo-row-price {
+  color: var(--color-text-muted);
+  font: 0.75rem/1.75 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.demo-row-dest {
+  grid-column: 2 / -1;
+  color: var(--color-accent);
+  font: 0.6875rem/1.3 var(--mono);
+}
+
+.demo-row-dest:empty {
+  display: none;
+}
+
+.demo-row.is-active {
+  border-color: var(--color-accent);
+}
+
+.demo-row.is-done {
+  opacity: 0.7;
+}
+
+.demo-status {
+  margin-top: 0.75rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.demo-board {
+  padding-bottom: 0;
+}
+
+.demo-types {
+  display: contents;
+}
+
+/* Price refresh and buying planned parts */
+
+.machine-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.price-refresh {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.price-refresh .btn-small {
+  align-self: auto;
+}
+
+.price-refresh .meta {
+  margin-top: 0;
+}
+
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Pasted PCPartPicker lists */
+
+.form textarea {
+  font: 0.8125rem/1.55 var(--mono);
+  resize: vertical;
+}
+
+.price-update {
+  margin-bottom: 1.5rem;
+  padding: 1rem 1.25rem;
+}
+
+.price-update summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.price-update summary .meta {
+  font-weight: 400;
+  margin-left: 0.5rem;
+}
+
+.price-update .form {
+  max-width: none;
+  margin-top: 0.75rem;
+}
+
+.price-update .external-link {
+  word-break: break-all;
+}
+
+/* Machine board (partials/machine_board.html, board.js): the machine as a
+   chassis of slot bays, each wired to its part card. Wires stay still and
+   move only while their slot is hovered, focused, or open. */
+
+.machine-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.machine-title {
+  min-width: 0;
+}
+
+.machine-page .price-update {
+  margin-bottom: 1.25rem;
+}
+
+.board-root {
+  display: grid;
+  gap: 1rem;
+  padding-bottom: 3rem;
+}
+
+/* An element's --c is its wire color: its category's (--type) by default,
+   its status color when the viewer colors by status. Empty slots stay grey
+   either way, except the ones a spare being placed fits. */
+.board-root .k-owned,
+.board-root .k-wanted,
+.board-root .k-borrowed,
+.drag-wire {
+  --c: var(--tc, var(--dim));
+}
+
+.board-root .legend .wire {
+  --c: var(--color-text-muted);
+}
+
+.board-root[data-color="status"] .k-owned,
+.drag-wire[data-color="status"].k-owned {
+  --c: var(--owned);
+}
+
+.board-root[data-color="status"] .k-wanted,
+.drag-wire[data-color="status"].k-wanted {
+  --c: var(--wanted);
+}
+
+.board-root[data-color="status"] .k-borrowed,
+.drag-wire[data-color="status"].k-borrowed {
+  --c: var(--borrowed);
+}
+
+.board-root .k-empty {
+  --c: var(--empty);
+}
+
+.board-root.is-placing:not([data-color="status"]) .k-empty.fits {
+  --c: var(--tc, var(--empty));
+}
+
+.board-root[data-color="status"] .lg-types {
+  display: none;
+}
+
+/* Totals and tools */
+
+.board-bar {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 420px;
+}
+
+.board-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.75rem;
+}
+
+.board-stats dt,
+.seg-label,
+.tray-group h4,
+.pn-section h4 {
+  font: 500 0.6875rem/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.board-stats dt {
+  margin-bottom: 0.3rem;
+}
+
+.board-stats dd {
+  font: 500 1.0625rem/1.1 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.meter {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--line);
+}
+
+.meter .k-owned { background: var(--owned); }
+.meter .k-borrowed { background: var(--borrowed); }
+.meter .k-wanted { background: var(--wanted); }
+.meter .k-empty { background: transparent; }
+
+.board-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+}
+
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--board);
+}
+
+.seg[hidden] {
+  display: none;
+}
+
+.seg-label {
+  padding: 0 0.5rem 0 0.375rem;
+}
+
+.seg button {
+  border: 0;
+  background: none;
+  padding: 0.375rem 0.7rem;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.seg button[aria-checked="true"] {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.adds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.adds .seg-label {
+  padding: 0 0.25rem 0 0;
+}
+
+.add {
+  border: 1px dashed var(--line-2);
+  background: none;
+  border-radius: 7px;
+  padding: 0.3rem 0.65rem;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.add:hover {
+  border-color: var(--tc, var(--color-accent));
+  color: var(--color-text);
+}
+
+.add i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 0.45rem;
+  border-radius: 50%;
+  background: var(--tc);
+  vertical-align: 1px;
+}
+
+.add-custom {
+  display: inline-flex;
+  gap: 0.375rem;
+}
+
+.add-custom input {
+  width: 8.5rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  background: var(--bay);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.8125rem;
+}
+
+/* The board */
+
+.board-frame {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background-color: var(--board);
+  background-image: radial-gradient(var(--grid) 1px, transparent 1.3px);
+  background-size: 18px 18px;
+  overflow-x: auto;
+}
+
+.board {
+  --gutter: clamp(64px, 9vw, 128px);
+  --rail: 80px;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 290px) var(--gutter) 284px var(--gutter) minmax(0, 290px);
+  align-items: center;
+  justify-content: center;
+  padding: 30px 24px;
+}
+
+.col {
+  display: grid;
+  gap: 12px;
+  align-content: center;
+  min-width: 0;
+}
+
+.col-left { grid-column: 1; grid-row: 1; }
+.chassis { grid-column: 3; grid-row: 1; }
+.col-right { grid-column: 5; grid-row: 1; }
+
+.wires {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* Chassis and bays */
+
+.chassis {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--chassis-top), var(--bay) 70%);
+  box-shadow: 0 24px 60px -30px var(--shadow), inset 0 1px 0 var(--sheen);
+}
+
+.ch-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ch-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: var(--color-text-muted);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ch-name {
+  font-weight: 600;
+  font-size: 0.875rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.ch-sub,
+.ch-foot,
+.ch-empty {
+  font: 0.6875rem/1.3 var(--mono);
+  color: var(--dim);
+}
+
+.ch-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.vents {
+  height: 10px;
+  border-radius: 3px;
+  background: repeating-linear-gradient(90deg, var(--vent) 0 2px, transparent 2px 6px);
+  opacity: 0.7;
+}
+
+.bays {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+  gap: 10px;
+}
+
+.bay-col {
+  display: grid;
+  gap: 8px;
+}
+
+.bay {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bay);
+  color: var(--color-text-muted);
+  font: 500 0.6875rem/1 var(--mono);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s, background 0.2s, opacity 0.2s;
+}
+
+.bay-col.right .bay {
+  flex-direction: row-reverse;
+}
+
+.bay .led {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 8px light-dark(color-mix(in srgb, var(--c) 30%, transparent), var(--c));
+}
+
+.bay.k-wanted .led {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--c);
+}
+
+.bay.k-empty {
+  border-style: dashed;
+  color: var(--dim);
+  opacity: 0.7;
+}
+
+.bay.k-empty:is(:hover, .is-hl, .is-open) {
+  opacity: 1;
+}
+
+.bay.k-empty .led {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--dim);
+}
+
+.bay:is(.is-hl, .is-open) {
+  border-color: var(--c);
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--c) 10%, var(--bay));
+}
+
+/* Slot cards */
+
+.slot-card {
+  display: grid;
+  gap: 5px;
+  width: 100%;
+  padding: 11px 14px 12px;
+  border: 1px solid color-mix(in srgb, var(--c) 32%, transparent);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s, opacity 0.25s, box-shadow 0.25s, background 0.2s, transform 0.2s;
+}
+
+.slot-card.k-wanted {
+  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+}
+
+.slot-card.k-empty {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--c) 45%, transparent);
+  background: transparent;
+  opacity: 0.6;
+}
+
+.slot-card.k-empty:is(:hover, :focus-visible, .is-hl, .is-open, .fits, .is-target) {
+  opacity: 1;
+}
+
+.slot-card:hover,
+.slot-card:is(.is-hl, .is-open) {
+  border-color: var(--c);
+  box-shadow: 0 12px 30px -16px color-mix(in srgb, var(--c) 60%, transparent);
+}
+
+.slot-card.is-open {
+  background: color-mix(in srgb, var(--c) 8%, var(--color-surface));
+}
+
+.slot-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.slot-cat {
+  font: 600 0.6875rem/1 var(--mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--c);
+}
+
+.slot-name {
+  font-weight: 550;
+  font-size: 0.875rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.slot-card.k-empty .slot-name {
+  color: var(--color-text-muted);
+  font-weight: 450;
+}
+
+.slot-meta {
+  font: 0.75rem/1.3 var(--mono);
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.slot-meta .delta.down { color: var(--owned); }
+.slot-meta .delta.up { color: var(--color-danger); }
+.slot-meta .missing { color: var(--borrowed); }
+
+.chip {
+  --st: var(--color-text-muted);
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--st) 13%, transparent);
+  color: var(--st);
+  font: 500 0.6875rem/1 var(--mono);
+  white-space: nowrap;
+}
+
+.chip.k-owned { --st: var(--owned); }
+.chip.k-wanted { --st: var(--wanted); }
+.chip.k-borrowed { --st: var(--borrowed); }
+
+/* Wires: installed parts are dotted, unbought ones dashed, empty slots
+   faintly dotted. */
+
+.wire {
+  transition: opacity 0.3s;
+}
+
+.wire path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.wire .glow {
+  stroke: var(--c);
+  stroke-width: 9;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.wire .base {
+  stroke: var(--c);
+  stroke-width: 1.7;
+  opacity: 0.5;
+  transition: opacity 0.3s;
+}
+
+.wire .flow {
+  stroke: var(--c);
+  stroke-width: 2.6;
+  stroke-dasharray: 1.5 8.5;
+}
+
+.wire.k-wanted .base {
+  stroke-dasharray: 6 5;
+  opacity: 0.8;
+}
+
+.wire.k-empty .base {
+  stroke-dasharray: 1.5 6;
+  opacity: 0.4;
+}
+
+.wire .port-card {
+  fill: var(--board);
+  stroke: var(--c);
+  stroke-width: 1.6;
+}
+
+.wire:is(.k-owned, .k-borrowed) .port-card,
+.wire .port-bay {
+  fill: var(--c);
+}
+
+.wire.k-empty .port-bay {
+  fill: var(--dim);
+}
+
+.wire:is(.is-hl, .is-open) .glow { opacity: 0.16; }
+.wire:is(.is-hl, .is-open) .base { opacity: 1; }
+.wire:is(.is-hl, .is-open) .flow { animation: march 1.2s linear infinite; }
+.wire.k-borrowed:is(.is-hl, .is-open) .flow { animation-duration: 1.7s; }
+.wire.k-wanted:is(.is-hl, .is-open) .base { animation: march-dash 1.1s linear infinite; }
+.wire.k-empty:is(.is-hl, .is-open) .base { animation: march-dot 1.1s linear infinite; }
+
+.board-root.has-focus .wire:not(.is-hl, .is-open) { opacity: 0.16; }
+.board-root.has-focus .slot-card:not(.is-hl, .is-open) { opacity: 0.55; }
+
+@keyframes march { to { stroke-dashoffset: -10; } }
+@keyframes march-dash { to { stroke-dashoffset: -11; } }
+@keyframes march-dot { to { stroke-dashoffset: -7.5; } }
+
+/* Placing a spare */
+
+.board-root.is-placing .slot-card:not(.fits) { opacity: 0.4; }
+.board-root.is-placing .wire:not(.fits) { opacity: 0.14; }
+.board-root.is-placing .wire.fits .base { opacity: 1; }
+.board-root.is-placing .bay:not(.fits) { opacity: 0.4; }
+
+.board-root.is-placing .bay.fits {
+  opacity: 1;
+  border-color: var(--c);
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--c) 10%, var(--bay));
+}
+
+.board-root.is-placing .bay.k-empty.fits .led {
+  box-shadow: inset 0 0 0 1.5px var(--c);
+}
+
+.board-root.is-placing .slot-card.fits {
+  border-color: var(--c);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 18%, transparent);
+}
+
+.slot-card.is-target {
+  border-style: solid;
+  background: color-mix(in srgb, var(--c) 14%, var(--color-surface));
+  transform: scale(1.02);
+}
+
+.drag-wire {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.drag-wire[hidden] {
+  display: none;
+}
+
+.drag-wire path {
+  fill: none;
+  stroke: var(--c);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.drag-wire .d-base {
+  stroke-width: 1.6;
+  opacity: 0.35;
+}
+
+.drag-wire .d-flow {
+  stroke-width: 2.6;
+  stroke-dasharray: 1.5 7.5;
+  animation: march 0.8s linear infinite;
+}
+
+.drag-wire circle {
+  fill: var(--c);
+}
+
+/* Legend */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.375rem;
+  padding: 0 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.lg {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.lg svg {
+  width: 38px;
+  height: 10px;
+  overflow: visible;
+}
+
+.lg-sw {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tc);
+}
+
+.lg-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--line-2);
+}
+
+/* Spare parts tray */
+
+.tray {
+  display: grid;
+  gap: 0.875rem;
+  padding: 1rem 1.125rem 1.125rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--board) 70%, transparent);
+}
+
+.tray-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.375rem 1rem;
+}
+
+.tray-head h3 {
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.tray-hint {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.tray-hint.is-placing {
+  color: var(--color-text);
+}
+
+.tray-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.125rem;
+}
+
+.tray-group h4 {
+  margin-bottom: 0.5rem;
+}
+
+.spares {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.spares .none {
+  color: var(--dim);
+  font-size: 0.8125rem;
+}
+
+.spare {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 2px 10px;
+  max-width: 280px;
+  padding: 9px 12px 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--c) 30%, transparent);
+  border-radius: 9px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  transition: border-color 0.2s, opacity 0.2s;
+}
+
+.spare:hover,
+.spare.is-selected {
+  border-color: var(--c);
+}
+
+.spare.is-selected {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent);
+}
+
+.spare.is-lifted {
+  opacity: 0.35;
+}
+
+.spare.ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 60;
+  margin: 0;
+  border-color: var(--c);
+  box-shadow: 0 18px 40px -12px var(--shadow);
+  pointer-events: none;
+}
+
+.sp-port {
+  grid-row: span 2;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c);
+}
+
+.spare.k-wanted .sp-port {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--c);
+}
+
+.sp-name {
+  font-weight: 550;
+  font-size: 0.8125rem;
+  line-height: 1.3;
+}
+
+.sp-meta {
+  font: 0.6875rem/1.3 var(--mono);
+  color: var(--color-text-muted);
+}
+
+.sp-meta b {
+  font-weight: 500;
+  color: var(--c);
+}
+
+/* Slot panel */
+
+.slot-panel {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  width: min(360px, calc(100vw - 32px));
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  background: var(--glass);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 30px 80px -20px var(--shadow);
+}
+
+.slot-panel[hidden],
+.slot-detail[hidden] {
+  display: none;
+}
+
+.panel-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 1.125rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.slot-detail {
+  display: grid;
+  gap: 1rem;
+}
+
+.pn-cat {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.375rem;
+  color: var(--c);
+  font: 600 0.6875rem/1 var(--mono);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.pn-cat i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c);
+}
+
+.pn-name {
+  margin: 0 2.25rem 0.5rem 0;
+  font-size: 1.1875rem;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.pn-name:focus {
+  outline: none;
+}
+
+.pn-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.375rem 1rem;
+  font-size: 0.8125rem;
+}
+
+.pn-dl dt {
+  color: var(--dim);
+}
+
+.pn-dl dd {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.pn-section {
+  display: grid;
+  gap: 0.625rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--line);
+}
+
+.pn-form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.pn-form label:not(.checkbox) {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.pn-form input[type="text"] {
+  width: 100%;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--bay);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.slot-detail .row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.slot-detail .error {
+  margin: 0;
+}
+
+.btn-bought {
+  background: color-mix(in srgb, var(--owned) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--owned) 55%, transparent);
+  color: var(--color-text);
+}
+
+.pn-note {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.fit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.625rem;
+  padding: 0.5rem 0.625rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.8125rem;
+}
+
+.fit span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.fit small {
+  display: block;
+  color: var(--color-text-muted);
+  font: 0.6875rem var(--mono);
+}
+
+/* Narrow: chassis on top, one column of cards fed by a ribbon down the left. */
+@media (max-width: 900px) {
+  .board {
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+    row-gap: 12px;
+    padding: 18px 14px 22px;
+  }
+
+  .chassis {
+    grid-column: 1;
+    grid-row: 1;
+    margin-bottom: 18px;
+  }
+
+  .col-left {
+    grid-column: 1;
+    grid-row: 2;
+    padding-left: var(--rail);
+  }
+
+  .col-right {
+    grid-column: 1;
+    grid-row: 3;
+    padding-left: var(--rail);
+  }
+
+  .tray-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .slot-panel {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 76vh;
+    border-radius: 18px 18px 0 0;
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wire path,
+  .drag-wire path {
+    animation: none !important;
+  }
+}
+
+/* Machine list, new machine, and import pages. They borrow the board's
+   pieces: mono labels, dotted-grid frames, chassis, and slot-colored lights. */
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem 1.5rem;
+  margin-bottom: 1.75rem;
+}
+
+.page-head .back-link {
+  display: inline-block;
+  margin-bottom: 0.25rem;
+  font-size: 0.875rem;
+}
+
+.page-title {
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+.page-lead {
+  max-width: 42rem;
+  margin-top: 0.5rem;
+  color: var(--color-text-muted);
+}
+
+.group-label,
+.eyebrow,
+.field-label,
+.mcard-stats dt {
+  display: block;
+  color: var(--dim);
+  font: 500 0.6875rem/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.group-label {
+  margin-bottom: 0.75rem;
+}
+
+.machine-grid + .group-label,
+.machine-empty + .group-label {
+  margin-top: 2.25rem;
+}
+
+.machines {
+  padding-bottom: 3rem;
+}
+
+/* Machine cards: a small chassis per machine. */
+
+.machine-grid {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 12px;
+}
+
+.mcard {
+  position: relative;
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--chassis-top), var(--bay) 75%);
+  box-shadow: 0 18px 40px -30px var(--shadow), inset 0 1px 0 var(--sheen);
+  transition: border-color 0.2s;
+}
+
+.mcard:hover,
+.mcard:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+
+.mcard-link {
+  display: grid;
+  gap: 12px;
+  height: 100%;
+  padding: 14px 16px 16px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.mcard-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.mcard-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.mcard-name {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.mcard-sub {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font: 0.75rem/1.4 var(--mono);
+}
+
+.mcard-desc {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+/* One light per slot: lit when filled, ringed when not bought yet, dark
+   when empty, in the slot's part-type color. */
+.mcard-leds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--board);
+}
+
+.mcard-leds i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tc, var(--dim));
+  box-shadow: 0 0 6px light-dark(transparent, color-mix(in srgb, var(--tc) 60%, transparent));
+}
+
+.mcard-leds .k-wanted {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--tc);
+}
+
+.mcard-leds .k-empty {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--dim);
+  opacity: 0.6;
+}
+
+.mcard .meter {
+  height: 4px;
+}
+
+.mcard-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+}
+
+.mcard.is-mine .mcard-stats {
+  padding-right: 4.5rem;
+}
+
+.mcard-stats dt {
+  margin-bottom: 5px;
+}
+
+.mcard-stats dd {
+  font: 500 0.9375rem/1.1 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.mcard-delete {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+}
+
+/* No machines yet: an empty slot, like the board's. */
+.machine-empty {
+  display: grid;
+  gap: 5px;
+  max-width: 360px;
+  padding: 14px 16px;
+  border: 1px dashed var(--line-2);
+  border-radius: 10px;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.2s;
+}
+
+.machine-empty:hover {
+  border-color: var(--color-accent);
+}
+
+.machine-empty .slot-cat {
+  color: var(--dim);
+}
+
+/* Panels and fields */
+
+.panel {
+  padding: 1.125rem 1.25rem 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--board) 70%, transparent);
+}
+
+.form.panel,
+.panel .form {
+  max-width: none;
+}
+
+.panel-head {
+  margin-bottom: 1rem;
+}
+
+.panel-head h3 {
+  font-size: 1.0625rem;
+  font-weight: 600;
+}
+
+.panel-note {
+  margin-top: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.form .field {
+  gap: 7px;
+}
+
+legend.field-label {
+  margin-bottom: 7px;
+  padding: 0;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+  gap: 1rem;
+}
+
+.form .status {
+  padding: 0;
+}
+
+.form-actions-split {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+/* A segmented picker over radio buttons, like the board's Color by. */
+.seg-pick {
+  flex-wrap: wrap;
+}
+
+.form .seg-pick label {
+  position: relative;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 0.375rem 0.7rem;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.form .seg-pick input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.form .seg-pick label:has(input:checked) {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.form .seg-pick label:has(input:focus-visible) {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.seg-pick .ch-icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* New machine: the form beside a preview chassis. */
+
+.new-machine {
+  padding-bottom: 3rem;
+}
+
+.nm-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (min-width: 900px) {
+  .nm-layout {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  }
+
+  .nm-preview {
+    position: sticky;
+    top: 1.5rem;
+  }
+}
+
+.nm-preview {
+  display: grid;
+  gap: 0.625rem;
+}
+
+.nm-frame {
+  display: grid;
+  justify-items: center;
+  padding: 28px 20px;
+}
+
+.nm-frame .chassis {
+  grid-column: auto;
+  grid-row: auto;
+  width: min(100%, 300px);
+}
+
+.nm-bays {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.nm-note {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.nm-note a {
+  color: var(--color-accent);
+}
+
+/* Import */
+
+.import-page {
+  padding-bottom: 3rem;
+}
+
+.import-page > .status.error {
+  margin-bottom: 1rem;
+  padding: 0;
 }
 
 .import-grid {
   display: grid;
-  gap: 2rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.25rem;
+  align-items: start;
 }
 
-@media (min-width: 768px) {
+@media (min-width: 900px) {
   .import-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
   }
 }
 
-.import-grid .form {
-  max-width: none;
-  margin-top: 1rem;
+.import-side {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.25rem;
 }
 
-.error {
-  color: #f87171;
+.form input[type="file"] {
+  min-width: 0;
+  padding: 0.375rem;
+  color: var(--color-text-muted);
   font-size: 0.875rem;
-  margin-top: 0.5rem;
+}
+
+.form input[type="file"]::file-selector-button {
+  margin-right: 0.75rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.form textarea.paste {
+  min-height: 15rem;
+  background: var(--color-bg);
+}
+
+/* PCPartPicker types wired to the slots they land in. */
+.renames {
+  list-style: none;
+  display: grid;
+  gap: 8px;
+  margin: 0.875rem 0;
+}
+
+.renames li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 0.75rem/1 var(--mono);
+}
+
+.rn-from,
+.rn-to {
+  padding: 5px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.rn-from {
+  border: 1px solid var(--line-2);
+  color: var(--color-text-muted);
+  text-transform: capitalize;
+}
+
+.rn-wire {
+  position: relative;
+  flex: 1;
+  min-width: 24px;
+  border-top: 2px dotted var(--tc);
+}
+
+.rn-wire::after {
+  content: "";
+  position: absolute;
+  top: -5px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tc);
+}
+
+.rn-to {
+  border: 1px solid color-mix(in srgb, var(--tc) 45%, transparent);
+  color: var(--tc);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }

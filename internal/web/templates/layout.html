@@ -5,8 +5,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Racket — Hardware Tracker</title>
+  <meta name="color-scheme" content="light dark">
   <link rel="stylesheet" href="/static/app.css">
+  {{/* Applies a saved theme before the page draws, so it doesn't flash
+       the system theme first. theme.js runs the picker. */ -}}
+  <script>try{var t=localStorage.getItem("racket.theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
   <script src="/static/htmx.min.js" defer></script>
+  <script src="/static/board.js" defer></script>
+  <script src="/static/theme.js" defer></script>
 </head>
 <body>
   <header class="header">
@@ -19,8 +25,22 @@
         <p class="subtitle">Hardware Tracker</p>
       </a>
       <nav class="nav">
+        {{- if .User}}
         <a href="/machines">Machines</a>
         <a href="/machines/new">New Machine</a>
+        <a href="/import">Import</a>
+        <span class="nav-user">{{.User.Username}}</span>
+        <form method="post" action="/logout" class="inline-form">
+          <button type="submit" class="btn-link">Log out</button>
+        </form>
+        {{- else}}
+        <a href="/login">Log in</a>
+        {{- end}}
+        <div class="seg theme-seg" role="radiogroup" aria-label="Theme" data-theme-toggle hidden>
+          <button type="button" role="radio" data-theme-choice="auto" aria-checked="true">Auto</button>
+          <button type="button" role="radio" data-theme-choice="light" aria-checked="false">Light</button>
+          <button type="button" role="radio" data-theme-choice="dark" aria-checked="false">Dark</button>
+        </div>
       </nav>
     </div>
   </header>

@@ -1,32 +1,69 @@
 {{template "page_top" .}}
   <section class="machines">
-    <div class="section-header">
-      <h2 class="section-title">Your machines</h2>
-      <a href="/machines/new" class="btn">New machine</a>
+    <div class="page-head">
+      <h2 class="page-title">Machines</h2>
+      <div class="section-actions">
+        <a href="/import" class="btn btn-secondary">Import from PCPartPicker</a>
+        <a href="/machines/new" class="btn">New machine</a>
+      </div>
     </div>
-    {{if .}}
-    <ul class="machine-list">
-      {{range .}}
-      <li class="card machine-row">
-        <a href="/machines/{{.Machine.ID}}" class="card-link">
-          <h2>{{.Machine.Name}}</h2>
-          {{if .Machine.Description.Valid}}<p>{{.Machine.Description.String}}</p>{{end}}
-          {{if .Machine.Location.Valid}}<p class="location">{{.Machine.Location.String}}</p>{{end}}
-          <p class="meta">
-            {{.FilledSlots}}/{{.TotalSlots}} slots filled
-            {{- if gt .PartsTotal 0.0}} · ${{printf "%.2f" .PartsTotal}}{{end}}
-            {{- if .Machine.PurchasedOn.Valid}} · purchased {{.Machine.PurchasedOn.Time.Format "2006-01-02"}}{{end}}
-          </p>
-        </a>
-        <form method="post" action="/machines/{{.Machine.ID}}/delete" class="inline-form"
-              hx-post="/machines/{{.Machine.ID}}/delete" hx-confirm="Delete {{.Machine.Name}}?">
-          <button type="submit" class="btn-danger">Delete</button>
-        </form>
-      </li>
-      {{end}}
-    </ul>
+    {{with .Data}}
+    <h3 class="group-label">Yours</h3>
+    {{if .Mine}}
+    <ul class="machine-grid">{{range .Mine}}{{template "machine_card" .}}{{end}}</ul>
     {{else}}
-    <div class="status">No machines yet. Add one to get started.</div>
+    <a href="/machines/new" class="machine-empty">
+      <span class="slot-cat">Empty slot</span>
+      <span class="slot-name">No machines yet</span>
+      <span class="slot-meta">Add one, or import a PCPartPicker list.</span>
+    </a>
+    {{end}}
+    {{if .Others}}
+    <h3 class="group-label">Friends'</h3>
+    <ul class="machine-grid">{{range .Others}}{{template "machine_card" .}}{{end}}</ul>
+    {{end}}
     {{end}}
   </section>
 {{template "page_bottom" .}}
+
+{{/* A machine as a small chassis: its slots are a strip of lights, colored
+     by part type and lit, ringed, or dark as on the board. */}}
+{{define "machine_card"}}
+<li class="mcard{{if .Mine}} is-mine{{end}}">
+  <a href="/machines/{{.Machine.ID}}" class="mcard-link">
+    <div class="mcard-head">
+      {{template "kind_icon" .Machine.Kind}}
+      <div class="mcard-title">
+        <h3 class="mcard-name">{{.Machine.Name}}</h3>
+        <p class="mcard-sub">
+          {{- if .Mine}}yours{{else}}{{.OwnerName}}'s{{end}} · {{.Machine.Kind}}
+          {{- if .Machine.Location.Valid}} · {{.Machine.Location.String}}{{end}}</p>
+      </div>
+      {{if ne .Machine.Status "active"}}<span class="badge badge-{{.Machine.Status}}">{{.Machine.Status}}</span>{{end}}
+    </div>
+    {{if .Machine.Description.Valid}}<p class="mcard-desc">{{.Machine.Description.String}}</p>{{end}}
+    {{if .LEDs}}
+    <div class="mcard-leds" aria-hidden="true">
+      {{- range .LEDs}}<i class="k-{{.State}}" style="{{.Style}}" title="{{.Category}}"></i>{{end -}}
+    </div>
+    <div class="meter" aria-hidden="true">
+      <span class="k-owned" style="flex-grow:{{index .Counts "owned"}}"></span>
+      <span class="k-borrowed" style="flex-grow:{{index .Counts "borrowed"}}"></span>
+      <span class="k-wanted" style="flex-grow:{{index .Counts "wanted"}}"></span>
+      <span class="k-empty" style="flex-grow:{{index .Counts "empty"}}"></span>
+    </div>
+    {{end}}
+    <dl class="mcard-stats">
+      <div><dt>Slots filled</dt><dd>{{.FilledSlots}} / {{.TotalSlots}}</dd></div>
+      <div><dt>Total</dt><dd>${{money .PartsTotalCents}}</dd></div>
+      {{if .Machine.PurchasedOn.Valid}}<div><dt>Purchased</dt><dd>{{.Machine.PurchasedOn.Time.Format "2006-01-02"}}</dd></div>{{end}}
+    </dl>
+  </a>
+  {{if .Mine}}
+  <form method="post" action="/machines/{{.Machine.ID}}/delete" class="mcard-delete"
+        hx-post="/machines/{{.Machine.ID}}/delete" hx-confirm="Delete {{.Machine.Name}}?">
+    <button type="submit" class="btn-danger">Delete</button>
+  </form>
+  {{end}}
+</li>
+{{end}}

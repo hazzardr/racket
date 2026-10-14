@@ -11,11 +11,16 @@ import (
 
 type Machine struct {
 	ID          int64
+	OwnerID     int64
 	Name        string
+	Kind        string
+	Status      string
+	FormFactor  sql.NullString
 	Description sql.NullString
 	Location    sql.NullString
 	BuiltOn     sql.NullTime
 	PurchasedOn sql.NullTime
+	Notes       sql.NullString
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -24,24 +29,76 @@ type MachineSlot struct {
 	ID        int64
 	MachineID int64
 	Category  string
+	Position  int64
 	CreatedAt time.Time
 }
 
 type Part struct {
-	ID              int64
-	MachineID       sql.NullInt64
-	Name            string
-	Category        sql.NullString
-	Description     sql.NullString
-	Manufacturer    sql.NullString
-	Model           sql.NullString
-	SerialNumber    sql.NullString
-	WarrantyExpires sql.NullTime
-	PurchasedOn     sql.NullTime
-	PurchasedFrom   sql.NullString
-	PurchasePrice   sql.NullFloat64
-	GuideUrl        sql.NullString
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	SlotID          sql.NullInt64
+	ID                  int64
+	OwnerID             int64
+	SlotID              sql.NullInt64
+	Status              string
+	Name                string
+	Category            sql.NullString
+	Manufacturer        sql.NullString
+	Model               sql.NullString
+	SerialNumber        sql.NullString
+	PriceCents          sql.NullInt64
+	Currency            string
+	PurchasedOn         sql.NullTime
+	PurchasedFrom       sql.NullString
+	WarrantyExpires     sql.NullTime
+	ProductUrl          sql.NullString
+	GuideUrl            sql.NullString
+	Notes               sql.NullString
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	SourceUrl           sql.NullString
+	PriceCheckedAt      sql.NullTime
+	PreviousPriceCents  sql.NullInt64
+	MissingFromSourceAt sql.NullTime
+}
+
+type Rack struct {
+	ID        int64
+	OwnerID   int64
+	Name      string
+	HeightU   int64
+	Status    string
+	Location  sql.NullString
+	Notes     sql.NullString
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type RackMount struct {
+	ID        int64
+	RackID    int64
+	MachineID sql.NullInt64
+	Label     sql.NullString
+	PositionU int64
+	HeightU   int64
+	Face      string
+	FullDepth bool
+	Notes     sql.NullString
+	CreatedAt time.Time
+}
+
+type Session struct {
+	TokenHash []byte
+	UserID    int64
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
+type User struct {
+	ID          int64
+	DiscordID   string
+	Username    string
+	DisplayName sql.NullString
+	AvatarHash  sql.NullString
+	IsAdmin     bool
+	CreatedAt   time.Time
+	LastLoginAt sql.NullTime
+	DeletedAt   sql.NullTime
 }

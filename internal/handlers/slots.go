@@ -1,164 +1,157 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"racket/internal/db"
 )
 
-// slotCard is one slot card on the machine detail page. Error is set when a
-// slot operation fails inline (e.g. double-fill) — htmx swaps the fragment
-// back with the error embedded (200, not 422, so the swap applies).
-type slotCard struct {
-	db.ListSlotsByMachineRow
-	Error string
-}
-
-// slotVM builds a slotCard from a slot and its part (nil part = empty slot).
-func slotVM(slot db.MachineSlot, part *db.Part) slotCard {
-	card := slotCard{ListSlotsByMachineRow: db.ListSlotsByMachineRow{
-		ID:        slot.ID,
-		MachineID: slot.MachineID,
-		Category:  slot.Category,
-		CreatedAt: slot.CreatedAt,
-	}}
-	if part != nil {
-		card.PartID = sql.NullInt64{Int64: part.ID, Valid: true}
-		card.PartName = sql.NullString{String: part.Name, Valid: true}
-		card.PartModel = part.Model
-	}
-	return card
-}
-
 // getSlot fetches a slot or renders the error response and returns false.
-func (h *Handler) getSlot(w http.ResponseWriter, r *http.Request, id int64) (db.MachineSlot, bool) {
+func (h *Handler) getSlot(w http.ResponseWriter, r *http.Request) (db.GetSlotRow, bool) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		h.renderError(w, r, http.StatusBadRequest, "invalid slot id")
+		return db.GetSlotRow{}, false
+	}
 	slot, err := h.queries.GetSlot(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			h.renderError(w, r, http.StatusNotFound, "Slot not found.")
-			return db.MachineSlot{}, false
+			return db.GetSlotRow{}, false
 		}
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
-		return db.MachineSlot{}, false
+		h.serverError(w, r, err)
+		return db.GetSlotRow{}, false
 	}
 	return slot, true
 }
 
-// nativeRedirect issues a 303 redirect for native (non-htmx) form posts and
-// reports whether the request was native. Fragment handlers return early when
-// it is; htmx requests carry on and render their fragment.
-func nativeRedirect(w http.ResponseWriter, r *http.Request, machineID int64) bool {
-	if r.Header.Get("Hx-Request") != "" {
-		return false
+// ownSlot is getSlot for changes: it also renders a 403 unless the viewer
+// owns the slot's machine.
+func (h *Handler) ownSlot(w http.ResponseWriter, r *http.Request) (db.GetSlotRow, bool) {
+	slot, ok := h.getSlot(w, r)
+	if !ok {
+		return db.GetSlotRow{}, false
 	}
-	//nolint:gosec // path is built from an int64 id only — no taint possible
-	http.Redirect(w, r, fmt.Sprintf("/machines/%d", machineID), http.StatusSeeOther)
-	return true
+	if slot.MachineOwnerID != viewer(r).ID {
+		h.forbidden(w, r)
+		return db.GetSlotRow{}, false
+	}
+	return slot, true
 }
 
-// AssignPart handles POST /slots/{id}/part: creates a part in the slot and
-// returns the updated slot card fragment.
-func (h *Handler) AssignPart(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
+// slotRow returns the slot's current row, with its part if any.
+func (h *Handler) slotRow(r *http.Request, slot db.GetSlotRow) (db.ListSlotsByMachineRow, error) {
+	rows, err := h.queries.ListSlotsByMachine(r.Context(), slot.MachineID)
 	if err != nil {
-		h.renderError(w, r, http.StatusBadRequest, "invalid slot id")
-		return
+		return db.ListSlotsByMachineRow{}, err
 	}
+	for _, row := range rows {
+		if row.ID == slot.ID {
+			return row, nil
+		}
+	}
+	return db.ListSlotsByMachineRow{}, fmt.Errorf("slot %d not found in machine %d", slot.ID, slot.MachineID)
+}
+
+// AddPart handles POST /slots/{id}/part: creates one of the viewer's parts in
+// the slot and returns the re-rendered board.
+func (h *Handler) AddPart(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		h.renderError(w, r, http.StatusBadRequest, "failed to parse form")
 		return
 	}
-	slot, ok := h.getSlot(w, r, id)
+	slot, ok := h.ownSlot(w, r)
 	if !ok {
 		return
 	}
 
 	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
-		card := slotVM(slot, nil)
-		card.Error = "Part name is required."
-		h.web.Fragment(w, "slot_card", card)
+		h.finishSlotAction(w, r, slot, boardNote{err: "Part name is required."})
 		return
 	}
+	status := partOwned
+	if r.FormValue("wanted") != "" {
+		status = partWanted
+	}
+	var price sql.NullInt64
+	if p, ok := parsePrice(r.FormValue("price")); ok {
+		price = sql.NullInt64{Int64: toCents(p), Valid: true}
+	}
 
-	part, err := h.queries.CreatePart(r.Context(), db.CreatePartParams{
-		MachineID:    sql.NullInt64{Int64: slot.MachineID, Valid: true},
+	_, err := h.queries.CreatePart(r.Context(), db.CreatePartParams{
+		OwnerID:      viewer(r).ID,
+		SlotID:       sql.NullInt64{Int64: slot.ID, Valid: true},
+		Status:       status,
 		Name:         name,
+		Category:     sql.NullString{String: slot.Category, Valid: true},
 		Manufacturer: optionalString(strings.TrimSpace(r.FormValue("manufacturer"))),
 		Model:        optionalString(strings.TrimSpace(r.FormValue("model"))),
-		SlotID:       sql.NullInt64{Int64: slot.ID, Valid: true},
+		PriceCents:   price,
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE") {
-			h.renderFilledSlotError(w, r, slot)
+		if isUniqueViolation(err) {
+			h.finishSlotAction(w, r, slot, boardNote{err: "Slot already filled."})
 			return
 		}
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
-
-	if nativeRedirect(w, r, slot.MachineID) {
-		return
-	}
-	h.web.Fragment(w, "slot_card", slotVM(slot, &part))
+	h.finishSlotAction(w, r, slot, boardNote{seated: true})
 }
 
-// renderFilledSlotError re-renders the slot card in its filled state with an
-// error, for double-fill attempts.
-func (h *Handler) renderFilledSlotError(w http.ResponseWriter, r *http.Request, slot db.MachineSlot) {
-	card := slotVM(slot, nil)
-	rows, err := h.queries.ListSlotsByMachine(r.Context(), slot.MachineID)
-	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
-		return
-	}
-	for _, row := range rows {
-		if row.ID == slot.ID {
-			card.ListSlotsByMachineRow = row
-			break
-		}
-	}
-	card.Error = "Slot already filled."
-	h.web.Fragment(w, "slot_card", card)
-}
-
-// UnassignPart handles POST /slots/{id}/part/delete: deletes the part in the
-// slot (matching the old UI's remove-part semantics) and returns the
-// empty-state slot card fragment.
-func (h *Handler) UnassignPart(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		h.renderError(w, r, http.StatusBadRequest, "invalid slot id")
-		return
-	}
-	slot, ok := h.getSlot(w, r, id)
+// RemovePart handles POST /slots/{id}/part/delete. The machine's owner
+// removing their own part deletes it; a borrowed part goes back to its
+// owner's inventory, whether the borrower returns it or the lender takes it
+// back.
+func (h *Handler) RemovePart(w http.ResponseWriter, r *http.Request) {
+	slot, ok := h.getSlot(w, r)
 	if !ok {
 		return
 	}
-	if err := h.queries.DeletePartsBySlot(r.Context(), sql.NullInt64{Int64: id, Valid: true}); err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+	row, err := h.slotRow(r, slot)
+	if err != nil {
+		h.serverError(w, r, err)
 		return
 	}
-	if nativeRedirect(w, r, slot.MachineID) {
+	if !row.PartID.Valid {
+		h.finishSlotAction(w, r, slot, boardNote{})
 		return
 	}
-	h.web.Fragment(w, "slot_card", slotVM(slot, nil))
+
+	v := viewer(r)
+	var n int64
+	if slot.MachineOwnerID == v.ID && row.PartOwnerID.Int64 == v.ID {
+		n, err = h.queries.DeletePart(r.Context(), db.DeletePartParams{ID: row.PartID.Int64, OwnerID: v.ID})
+	} else {
+		n, err = h.queries.UnassignPart(r.Context(), db.UnassignPartParams{PartID: row.PartID.Int64, UserID: v.ID})
+	}
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	if n == 0 {
+		h.forbidden(w, r)
+		return
+	}
+	h.finishSlotAction(w, r, slot, boardNote{})
 }
 
 // CreateSlot handles POST /machines/{id}/slots (form field "category") and
-// returns the new empty slot card fragment.
+// returns the re-rendered board.
 func (h *Handler) CreateSlot(w http.ResponseWriter, r *http.Request) {
-	machineID, err := parseID(r, "id")
-	if err != nil {
-		h.renderError(w, r, http.StatusBadRequest, "invalid machine id")
-		return
-	}
 	if err := r.ParseForm(); err != nil {
 		h.renderError(w, r, http.StatusBadRequest, "failed to parse form")
+		return
+	}
+	machine, ok := h.ownMachine(w, r)
+	if !ok {
 		return
 	}
 	category := strings.TrimSpace(r.FormValue("category"))
@@ -166,53 +159,121 @@ func (h *Handler) CreateSlot(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, r, http.StatusBadRequest, "category is required")
 		return
 	}
-	if _, err := h.queries.GetMachine(r.Context(), machineID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			h.renderError(w, r, http.StatusNotFound, "Machine not found.")
-			return
-		}
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
-		return
-	}
 
 	slot, err := h.queries.CreateSlot(r.Context(), db.CreateSlotParams{
-		MachineID: machineID,
+		MachineID: machine.Machine.ID,
 		Category:  category,
 	})
 	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
-
-	if nativeRedirect(w, r, machineID) {
-		return
-	}
-	h.web.Fragment(w, "slot_card", slotVM(slot, nil))
+	h.finishSlotAction(w, r, db.GetSlotRow{
+		ID:             slot.ID,
+		MachineID:      slot.MachineID,
+		MachineOwnerID: machine.Machine.OwnerID,
+	}, boardNote{})
 }
 
-// DeleteSlot handles POST /slots/{id}/delete. Assigned parts are unassigned
-// first (they survive in "Other parts"). The htmx caller uses hx-swap="delete"
-// to remove the card, so the response body is empty.
+// DeleteSlot handles POST /slots/{id}/delete. A part in the slot goes back to
+// its owner's inventory.
 func (h *Handler) DeleteSlot(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
-	if err != nil {
-		h.renderError(w, r, http.StatusBadRequest, "invalid slot id")
-		return
-	}
-	slot, ok := h.getSlot(w, r, id)
+	slot, ok := h.ownSlot(w, r)
 	if !ok {
 		return
 	}
-	if err := h.queries.UnassignPartsBySlot(r.Context(), sql.NullInt64{Int64: id, Valid: true}); err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+	_, err := h.queries.DeleteSlot(r.Context(), db.DeleteSlotParams{SlotID: slot.ID, UserID: viewer(r).ID})
+	if err != nil {
+		h.serverError(w, r, err)
 		return
 	}
-	if err := h.queries.DeleteSlot(r.Context(), id); err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+	h.finishSlotAction(w, r, slot, boardNote{})
+}
+
+// PlacePart handles POST /slots/{id}/part/place (form field "part_id"): the
+// machine's owner puts a spare part in the slot, their own or a friend's.
+// A part already in the slot goes back to its owner's spares.
+func (h *Handler) PlacePart(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.renderError(w, r, http.StatusBadRequest, "failed to parse form")
 		return
 	}
-	if nativeRedirect(w, r, slot.MachineID) {
+	slot, ok := h.ownSlot(w, r)
+	if !ok {
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	partID, err := strconv.ParseInt(r.FormValue("part_id"), 10, 64)
+	if err != nil {
+		h.renderError(w, r, http.StatusBadRequest, "invalid part id")
+		return
+	}
+	placed, err := h.placePart(r.Context(), slot, partID, viewer(r).ID)
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	if !placed {
+		h.finishSlotAction(w, r, slot, boardNote{err: "That part can't go in this slot. It may be in another machine now."})
+		return
+	}
+	h.finishSlotAction(w, r, slot, boardNote{seated: true})
+}
+
+// placePart swaps the part into the slot in one transaction and reports
+// whether the user was allowed to.
+func (h *Handler) placePart(ctx context.Context, slot db.GetSlotRow, partID, userID int64) (bool, error) {
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := h.queries.WithTx(tx)
+
+	rows, err := q.ListSlotsByMachine(ctx, slot.MachineID)
+	if err != nil {
+		return false, err
+	}
+	for _, row := range rows {
+		if row.ID != slot.ID || !row.PartID.Valid {
+			continue
+		}
+		if row.PartID.Int64 == partID {
+			return true, nil
+		}
+		if _, err := q.UnassignPart(ctx, db.UnassignPartParams{PartID: row.PartID.Int64, UserID: userID}); err != nil {
+			return false, err
+		}
+	}
+	n, err := q.AssignPartToSlot(ctx, db.AssignPartToSlotParams{
+		SlotID: sql.NullInt64{Int64: slot.ID, Valid: true},
+		PartID: partID,
+		UserID: userID,
+	})
+	if err != nil || n == 0 {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+// TakeOutPart handles POST /slots/{id}/part/takeout: the machine's owner
+// takes the part out without deleting it. It goes back to its owner's
+// spares, so a borrowed part goes back to the friend who lent it.
+func (h *Handler) TakeOutPart(w http.ResponseWriter, r *http.Request) {
+	slot, ok := h.ownSlot(w, r)
+	if !ok {
+		return
+	}
+	row, err := h.slotRow(r, slot)
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	if row.PartID.Valid {
+		_, err = h.queries.UnassignPart(r.Context(), db.UnassignPartParams{PartID: row.PartID.Int64, UserID: viewer(r).ID})
+		if err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+	}
+	h.finishSlotAction(w, r, slot, boardNote{})
 }

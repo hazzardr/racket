@@ -11,14 +11,50 @@ import (
 	"time"
 )
 
+const assignPartToSlot = `-- name: AssignPartToSlot :execrows
+UPDATE parts SET slot_id = ?1, updated_at = CURRENT_TIMESTAMP
+WHERE parts.id = ?2
+  AND EXISTS (
+    SELECT 1 FROM machine_slots s JOIN machines m ON m.id = s.machine_id
+    WHERE s.id = ?1 AND m.owner_id = ?3
+  )
+  AND (
+    parts.owner_id = ?3
+    OR (
+      parts.status = 'owned' AND parts.slot_id IS NULL
+      AND EXISTS (SELECT 1 FROM users u WHERE u.id = parts.owner_id AND u.deleted_at IS NULL)
+    )
+  )
+`
+
+type AssignPartToSlotParams struct {
+	SlotID sql.NullInt64
+	PartID int64
+	UserID int64
+}
+
+// The caller must own the slot's machine. Their own parts can move freely;
+// another user's part must be owned (bought), not already in a slot, and
+// belong to someone who hasn't left.
+func (q *Queries) AssignPartToSlot(ctx context.Context, arg AssignPartToSlotParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, assignPartToSlot, arg.SlotID, arg.PartID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const createMachine = `-- name: CreateMachine :one
-INSERT INTO machines (name, description, location, built_on, purchased_on)
-VALUES (?, ?, ?, ?, ?)
-RETURNING id, name, description, location, built_on, purchased_on, created_at, updated_at
+INSERT INTO machines (owner_id, name, kind, status, description, location, built_on, purchased_on)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, owner_id, name, kind, status, form_factor, description, location, built_on, purchased_on, notes, created_at, updated_at
 `
 
 type CreateMachineParams struct {
+	OwnerID     int64
 	Name        string
+	Kind        string
+	Status      string
 	Description sql.NullString
 	Location    sql.NullString
 	BuiltOn     sql.NullTime
@@ -27,7 +63,10 @@ type CreateMachineParams struct {
 
 func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (Machine, error) {
 	row := q.db.QueryRowContext(ctx, createMachine,
+		arg.OwnerID,
 		arg.Name,
+		arg.Kind,
+		arg.Status,
 		arg.Description,
 		arg.Location,
 		arg.BuiltOn,
@@ -36,11 +75,16 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 	var i Machine
 	err := row.Scan(
 		&i.ID,
+		&i.OwnerID,
 		&i.Name,
+		&i.Kind,
+		&i.Status,
+		&i.FormFactor,
 		&i.Description,
 		&i.Location,
 		&i.BuiltOn,
 		&i.PurchasedOn,
+		&i.Notes,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -48,70 +92,96 @@ func (q *Queries) CreateMachine(ctx context.Context, arg CreateMachineParams) (M
 }
 
 const createPart = `-- name: CreatePart :one
+
 INSERT INTO parts (
-    machine_id, name, category, description, manufacturer, model, serial_number,
-    warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, slot_id
+    owner_id, slot_id, status, name, category, manufacturer, model,
+    price_cents, purchased_from, source_url, price_checked_at
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at, slot_id
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, owner_id, slot_id, status, name, category, manufacturer, model, serial_number, price_cents, currency, purchased_on, purchased_from, warranty_expires, product_url, guide_url, notes, created_at, updated_at, source_url, price_checked_at, previous_price_cents, missing_from_source_at
 `
 
 type CreatePartParams struct {
-	MachineID       sql.NullInt64
-	Name            string
-	Category        sql.NullString
-	Description     sql.NullString
-	Manufacturer    sql.NullString
-	Model           sql.NullString
-	SerialNumber    sql.NullString
-	WarrantyExpires sql.NullTime
-	PurchasedOn     sql.NullTime
-	PurchasedFrom   sql.NullString
-	PurchasePrice   sql.NullFloat64
-	GuideUrl        sql.NullString
-	SlotID          sql.NullInt64
+	OwnerID        int64
+	SlotID         sql.NullInt64
+	Status         string
+	Name           string
+	Category       sql.NullString
+	Manufacturer   sql.NullString
+	Model          sql.NullString
+	PriceCents     sql.NullInt64
+	PurchasedFrom  sql.NullString
+	SourceUrl      sql.NullString
+	PriceCheckedAt sql.NullTime
 }
 
+// Parts ---------------------------------------------------------------------
 func (q *Queries) CreatePart(ctx context.Context, arg CreatePartParams) (Part, error) {
 	row := q.db.QueryRowContext(ctx, createPart,
-		arg.MachineID,
+		arg.OwnerID,
+		arg.SlotID,
+		arg.Status,
 		arg.Name,
 		arg.Category,
-		arg.Description,
 		arg.Manufacturer,
 		arg.Model,
-		arg.SerialNumber,
-		arg.WarrantyExpires,
-		arg.PurchasedOn,
+		arg.PriceCents,
 		arg.PurchasedFrom,
-		arg.PurchasePrice,
-		arg.GuideUrl,
-		arg.SlotID,
+		arg.SourceUrl,
+		arg.PriceCheckedAt,
 	)
 	var i Part
 	err := row.Scan(
 		&i.ID,
-		&i.MachineID,
+		&i.OwnerID,
+		&i.SlotID,
+		&i.Status,
 		&i.Name,
 		&i.Category,
-		&i.Description,
 		&i.Manufacturer,
 		&i.Model,
 		&i.SerialNumber,
-		&i.WarrantyExpires,
+		&i.PriceCents,
+		&i.Currency,
 		&i.PurchasedOn,
 		&i.PurchasedFrom,
-		&i.PurchasePrice,
+		&i.WarrantyExpires,
+		&i.ProductUrl,
 		&i.GuideUrl,
+		&i.Notes,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.SlotID,
+		&i.SourceUrl,
+		&i.PriceCheckedAt,
+		&i.PreviousPriceCents,
+		&i.MissingFromSourceAt,
 	)
 	return i, err
 }
 
+const createSession = `-- name: CreateSession :exec
+INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)
+`
+
+type CreateSessionParams struct {
+	TokenHash []byte
+	UserID    int64
+	ExpiresAt time.Time
+}
+
+func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
+	_, err := q.db.ExecContext(ctx, createSession, arg.TokenHash, arg.UserID, arg.ExpiresAt)
+	return err
+}
+
 const createSlot = `-- name: CreateSlot :one
-INSERT INTO machine_slots (machine_id, category) VALUES (?, ?) RETURNING id, machine_id, category, created_at
+
+INSERT INTO machine_slots (machine_id, category, position)
+VALUES (
+    ?1, ?2,
+    (SELECT coalesce(max(position), -1) + 1 FROM machine_slots WHERE machine_id = ?1)
+)
+RETURNING id, machine_id, category, position, created_at
 `
 
 type CreateSlotParams struct {
@@ -119,6 +189,8 @@ type CreateSlotParams struct {
 	Category  string
 }
 
+// Slots ---------------------------------------------------------------------
+// Appends a slot after the machine's existing ones.
 func (q *Queries) CreateSlot(ctx context.Context, arg CreateSlotParams) (MachineSlot, error) {
 	row := q.db.QueryRowContext(ctx, createSlot, arg.MachineID, arg.Category)
 	var i MachineSlot
@@ -126,138 +198,272 @@ func (q *Queries) CreateSlot(ctx context.Context, arg CreateSlotParams) (Machine
 		&i.ID,
 		&i.MachineID,
 		&i.Category,
+		&i.Position,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
-const deleteMachine = `-- name: DeleteMachine :exec
-DELETE FROM machines
-WHERE id = ?
+const deleteExpiredSessions = `-- name: DeleteExpiredSessions :exec
+DELETE FROM sessions WHERE expires_at <= ?
 `
 
-func (q *Queries) DeleteMachine(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteMachine, id)
+func (q *Queries) DeleteExpiredSessions(ctx context.Context, expiresAt time.Time) error {
+	_, err := q.db.ExecContext(ctx, deleteExpiredSessions, expiresAt)
 	return err
 }
 
-const deletePart = `-- name: DeletePart :exec
-DELETE FROM parts
-WHERE id = ?
+const deleteMachine = `-- name: DeleteMachine :execrows
+DELETE FROM machines WHERE id = ? AND owner_id = ?
 `
 
-func (q *Queries) DeletePart(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deletePart, id)
+type DeleteMachineParams struct {
+	ID      int64
+	OwnerID int64
+}
+
+func (q *Queries) DeleteMachine(ctx context.Context, arg DeleteMachineParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteMachine, arg.ID, arg.OwnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deletePart = `-- name: DeletePart :execrows
+DELETE FROM parts WHERE id = ? AND owner_id = ?
+`
+
+type DeletePartParams struct {
+	ID      int64
+	OwnerID int64
+}
+
+func (q *Queries) DeletePart(ctx context.Context, arg DeletePartParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deletePart, arg.ID, arg.OwnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteSession = `-- name: DeleteSession :exec
+DELETE FROM sessions WHERE token_hash = ?
+`
+
+func (q *Queries) DeleteSession(ctx context.Context, tokenHash []byte) error {
+	_, err := q.db.ExecContext(ctx, deleteSession, tokenHash)
 	return err
 }
 
-const deletePartsBySlot = `-- name: DeletePartsBySlot :exec
-DELETE FROM parts WHERE slot_id = ?
+const deleteSessionsByUser = `-- name: DeleteSessionsByUser :exec
+DELETE FROM sessions WHERE user_id = ?
 `
 
-func (q *Queries) DeletePartsBySlot(ctx context.Context, slotID sql.NullInt64) error {
-	_, err := q.db.ExecContext(ctx, deletePartsBySlot, slotID)
+func (q *Queries) DeleteSessionsByUser(ctx context.Context, userID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteSessionsByUser, userID)
 	return err
 }
 
-const deleteSlot = `-- name: DeleteSlot :exec
-DELETE FROM machine_slots WHERE id = ?
+const deleteSlot = `-- name: DeleteSlot :execrows
+DELETE FROM machine_slots
+WHERE machine_slots.id = ?1
+  AND machine_slots.machine_id IN (SELECT id FROM machines WHERE owner_id = ?2)
 `
 
-func (q *Queries) DeleteSlot(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteSlot, id)
-	return err
+type DeleteSlotParams struct {
+	SlotID int64
+	UserID int64
+}
+
+// Parts in the slot go back to their owners' inventories (ON DELETE SET NULL).
+func (q *Queries) DeleteSlot(ctx context.Context, arg DeleteSlotParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteSlot, arg.SlotID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getMachine = `-- name: GetMachine :one
-SELECT id, name, description, location, built_on, purchased_on, created_at, updated_at FROM machines
-WHERE id = ?
+SELECT machines.id, machines.owner_id, machines.name, machines.kind, machines.status, machines.form_factor, machines.description, machines.location, machines.built_on, machines.purchased_on, machines.notes, machines.created_at, machines.updated_at, users.username AS owner_name
+FROM machines
+JOIN users ON users.id = machines.owner_id
+WHERE machines.id = ? AND users.deleted_at IS NULL
 `
 
-func (q *Queries) GetMachine(ctx context.Context, id int64) (Machine, error) {
+type GetMachineRow struct {
+	Machine   Machine
+	OwnerName string
+}
+
+// A machine whose owner hasn't left.
+func (q *Queries) GetMachine(ctx context.Context, id int64) (GetMachineRow, error) {
 	row := q.db.QueryRowContext(ctx, getMachine, id)
+	var i GetMachineRow
+	err := row.Scan(
+		&i.Machine.ID,
+		&i.Machine.OwnerID,
+		&i.Machine.Name,
+		&i.Machine.Kind,
+		&i.Machine.Status,
+		&i.Machine.FormFactor,
+		&i.Machine.Description,
+		&i.Machine.Location,
+		&i.Machine.BuiltOn,
+		&i.Machine.PurchasedOn,
+		&i.Machine.Notes,
+		&i.Machine.CreatedAt,
+		&i.Machine.UpdatedAt,
+		&i.OwnerName,
+	)
+	return i, err
+}
+
+const getMachineByOwnerAndName = `-- name: GetMachineByOwnerAndName :one
+SELECT id, owner_id, name, kind, status, form_factor, description, location, built_on, purchased_on, notes, created_at, updated_at FROM machines WHERE owner_id = ? AND name = ?
+`
+
+type GetMachineByOwnerAndNameParams struct {
+	OwnerID int64
+	Name    string
+}
+
+func (q *Queries) GetMachineByOwnerAndName(ctx context.Context, arg GetMachineByOwnerAndNameParams) (Machine, error) {
+	row := q.db.QueryRowContext(ctx, getMachineByOwnerAndName, arg.OwnerID, arg.Name)
 	var i Machine
 	err := row.Scan(
 		&i.ID,
+		&i.OwnerID,
 		&i.Name,
+		&i.Kind,
+		&i.Status,
+		&i.FormFactor,
 		&i.Description,
 		&i.Location,
 		&i.BuiltOn,
 		&i.PurchasedOn,
+		&i.Notes,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const getPart = `-- name: GetPart :one
-SELECT id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at, slot_id FROM parts
-WHERE id = ?
+const getSessionUser = `-- name: GetSessionUser :one
+SELECT users.id, users.discord_id, users.username, users.display_name, users.avatar_hash, users.is_admin, users.created_at, users.last_login_at, users.deleted_at FROM sessions
+JOIN users ON users.id = sessions.user_id
+WHERE sessions.token_hash = ?1
+  AND sessions.expires_at > ?2
+  AND users.deleted_at IS NULL
 `
 
-func (q *Queries) GetPart(ctx context.Context, id int64) (Part, error) {
-	row := q.db.QueryRowContext(ctx, getPart, id)
-	var i Part
+type GetSessionUserParams struct {
+	TokenHash []byte
+	Now       time.Time
+}
+
+// The user behind a live session. Users who have left have no live sessions.
+func (q *Queries) GetSessionUser(ctx context.Context, arg GetSessionUserParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, getSessionUser, arg.TokenHash, arg.Now)
+	var i User
 	err := row.Scan(
 		&i.ID,
-		&i.MachineID,
-		&i.Name,
-		&i.Category,
-		&i.Description,
-		&i.Manufacturer,
-		&i.Model,
-		&i.SerialNumber,
-		&i.WarrantyExpires,
-		&i.PurchasedOn,
-		&i.PurchasedFrom,
-		&i.PurchasePrice,
-		&i.GuideUrl,
+		&i.DiscordID,
+		&i.Username,
+		&i.DisplayName,
+		&i.AvatarHash,
+		&i.IsAdmin,
 		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.SlotID,
+		&i.LastLoginAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getSlot = `-- name: GetSlot :one
-SELECT id, machine_id, category, created_at FROM machine_slots WHERE id = ?
+SELECT machine_slots.id, machine_slots.machine_id, machine_slots.category, machine_slots.position, machine_slots.created_at, machines.owner_id AS machine_owner_id
+FROM machine_slots
+JOIN machines ON machines.id = machine_slots.machine_id
+WHERE machine_slots.id = ?
 `
 
-func (q *Queries) GetSlot(ctx context.Context, id int64) (MachineSlot, error) {
+type GetSlotRow struct {
+	ID             int64
+	MachineID      int64
+	Category       string
+	Position       int64
+	CreatedAt      time.Time
+	MachineOwnerID int64
+}
+
+// A slot with its machine's owner, for permission checks.
+func (q *Queries) GetSlot(ctx context.Context, id int64) (GetSlotRow, error) {
 	row := q.db.QueryRowContext(ctx, getSlot, id)
-	var i MachineSlot
+	var i GetSlotRow
 	err := row.Scan(
 		&i.ID,
 		&i.MachineID,
 		&i.Category,
+		&i.Position,
 		&i.CreatedAt,
+		&i.MachineOwnerID,
 	)
 	return i, err
 }
 
 const listMachines = `-- name: ListMachines :many
-SELECT id, name, description, location, built_on, purchased_on, created_at, updated_at FROM machines
-ORDER BY created_at DESC
+
+SELECT machines.id, machines.owner_id, machines.name, machines.kind, machines.status, machines.form_factor, machines.description, machines.location, machines.built_on, machines.purchased_on, machines.notes, machines.created_at, machines.updated_at, users.username AS owner_name,
+    (SELECT count(*) FROM machine_slots s WHERE s.machine_id = machines.id) AS total_slots,
+    (SELECT count(*) FROM machine_slots s JOIN parts p ON p.slot_id = s.id
+     WHERE s.machine_id = machines.id) AS filled_slots,
+    CAST((SELECT coalesce(sum(p.price_cents), 0) FROM machine_slots s JOIN parts p ON p.slot_id = s.id
+     WHERE s.machine_id = machines.id) AS INTEGER) AS parts_total_cents
+FROM machines
+JOIN users ON users.id = machines.owner_id
+WHERE users.deleted_at IS NULL
+ORDER BY machines.created_at DESC, machines.id DESC
 `
 
-func (q *Queries) ListMachines(ctx context.Context) ([]Machine, error) {
+type ListMachinesRow struct {
+	Machine         Machine
+	OwnerName       string
+	TotalSlots      int64
+	FilledSlots     int64
+	PartsTotalCents int64
+}
+
+// Machines ------------------------------------------------------------------
+// Machines of users who haven't left, newest first, with slot and price
+// totals for the list page.
+func (q *Queries) ListMachines(ctx context.Context) ([]ListMachinesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listMachines)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Machine
+	var items []ListMachinesRow
 	for rows.Next() {
-		var i Machine
+		var i ListMachinesRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Description,
-			&i.Location,
-			&i.BuiltOn,
-			&i.PurchasedOn,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.Machine.ID,
+			&i.Machine.OwnerID,
+			&i.Machine.Name,
+			&i.Machine.Kind,
+			&i.Machine.Status,
+			&i.Machine.FormFactor,
+			&i.Machine.Description,
+			&i.Machine.Location,
+			&i.Machine.BuiltOn,
+			&i.Machine.PurchasedOn,
+			&i.Machine.Notes,
+			&i.Machine.CreatedAt,
+			&i.Machine.UpdatedAt,
+			&i.OwnerName,
+			&i.TotalSlots,
+			&i.FilledSlots,
+			&i.PartsTotalCents,
 		); err != nil {
 			return nil, err
 		}
@@ -272,13 +478,12 @@ func (q *Queries) ListMachines(ctx context.Context) ([]Machine, error) {
 	return items, nil
 }
 
-const listParts = `-- name: ListParts :many
-SELECT id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at, slot_id FROM parts
-ORDER BY created_at DESC
+const listPartsByOwner = `-- name: ListPartsByOwner :many
+SELECT id, owner_id, slot_id, status, name, category, manufacturer, model, serial_number, price_cents, currency, purchased_on, purchased_from, warranty_expires, product_url, guide_url, notes, created_at, updated_at, source_url, price_checked_at, previous_price_cents, missing_from_source_at FROM parts WHERE owner_id = ? ORDER BY created_at DESC, id DESC
 `
 
-func (q *Queries) ListParts(ctx context.Context) ([]Part, error) {
-	rows, err := q.db.QueryContext(ctx, listParts)
+func (q *Queries) ListPartsByOwner(ctx context.Context, ownerID int64) ([]Part, error) {
+	rows, err := q.db.QueryContext(ctx, listPartsByOwner, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -288,21 +493,28 @@ func (q *Queries) ListParts(ctx context.Context) ([]Part, error) {
 		var i Part
 		if err := rows.Scan(
 			&i.ID,
-			&i.MachineID,
+			&i.OwnerID,
+			&i.SlotID,
+			&i.Status,
 			&i.Name,
 			&i.Category,
-			&i.Description,
 			&i.Manufacturer,
 			&i.Model,
 			&i.SerialNumber,
-			&i.WarrantyExpires,
+			&i.PriceCents,
+			&i.Currency,
 			&i.PurchasedOn,
 			&i.PurchasedFrom,
-			&i.PurchasePrice,
+			&i.WarrantyExpires,
+			&i.ProductUrl,
 			&i.GuideUrl,
+			&i.Notes,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.SlotID,
+			&i.SourceUrl,
+			&i.PriceCheckedAt,
+			&i.PreviousPriceCents,
+			&i.MissingFromSourceAt,
 		); err != nil {
 			return nil, err
 		}
@@ -317,14 +529,27 @@ func (q *Queries) ListParts(ctx context.Context) ([]Part, error) {
 	return items, nil
 }
 
-const listPartsByMachine = `-- name: ListPartsByMachine :many
-SELECT id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at, slot_id FROM parts
-WHERE machine_id = ?
-ORDER BY created_at DESC
+const listRefreshableParts = `-- name: ListRefreshableParts :many
+
+SELECT parts.id, parts.owner_id, parts.slot_id, parts.status, parts.name, parts.category, parts.manufacturer, parts.model, parts.serial_number, parts.price_cents, parts.currency, parts.purchased_on, parts.purchased_from, parts.warranty_expires, parts.product_url, parts.guide_url, parts.notes, parts.created_at, parts.updated_at, parts.source_url, parts.price_checked_at, parts.previous_price_cents, parts.missing_from_source_at FROM parts
+JOIN machine_slots s ON s.id = parts.slot_id
+JOIN machines m ON m.id = s.machine_id
+WHERE m.id = ?1 AND m.owner_id = ?2
+  AND parts.owner_id = ?2
+  AND parts.status = 'wanted' AND parts.source_url IS NOT NULL
+ORDER BY s.position, s.id
 `
 
-func (q *Queries) ListPartsByMachine(ctx context.Context, machineID sql.NullInt64) ([]Part, error) {
-	rows, err := q.db.QueryContext(ctx, listPartsByMachine, machineID)
+type ListRefreshablePartsParams struct {
+	MachineID int64
+	UserID    int64
+}
+
+// Price refresh -------------------------------------------------------------
+// The machine's parts that its owner hasn't bought yet and that came from a
+// PCPartPicker list, in slot order.
+func (q *Queries) ListRefreshableParts(ctx context.Context, arg ListRefreshablePartsParams) ([]Part, error) {
+	rows, err := q.db.QueryContext(ctx, listRefreshableParts, arg.MachineID, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -334,22 +559,78 @@ func (q *Queries) ListPartsByMachine(ctx context.Context, machineID sql.NullInt6
 		var i Part
 		if err := rows.Scan(
 			&i.ID,
-			&i.MachineID,
+			&i.OwnerID,
+			&i.SlotID,
+			&i.Status,
 			&i.Name,
 			&i.Category,
-			&i.Description,
 			&i.Manufacturer,
 			&i.Model,
 			&i.SerialNumber,
-			&i.WarrantyExpires,
+			&i.PriceCents,
+			&i.Currency,
 			&i.PurchasedOn,
 			&i.PurchasedFrom,
-			&i.PurchasePrice,
+			&i.WarrantyExpires,
+			&i.ProductUrl,
 			&i.GuideUrl,
+			&i.Notes,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.SlotID,
+			&i.SourceUrl,
+			&i.PriceCheckedAt,
+			&i.PreviousPriceCents,
+			&i.MissingFromSourceAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSlotStates = `-- name: ListSlotStates :many
+SELECT machine_slots.machine_id, machine_slots.category,
+       CASE
+         WHEN parts.id IS NULL THEN 'empty'
+         WHEN parts.status = 'wanted' THEN 'unpurchased'
+         WHEN parts.owner_id = machines.owner_id THEN 'own'
+         WHEN users.deleted_at IS NOT NULL THEN 'former_member'
+         ELSE 'borrowed'
+       END AS part_source
+FROM machine_slots
+JOIN machines ON machines.id = machine_slots.machine_id
+JOIN users AS owners ON owners.id = machines.owner_id
+LEFT JOIN parts ON parts.slot_id = machine_slots.id
+LEFT JOIN users ON users.id = parts.owner_id
+WHERE owners.deleted_at IS NULL
+ORDER BY machine_slots.machine_id, machine_slots.position, machine_slots.id
+`
+
+type ListSlotStatesRow struct {
+	MachineID  int64
+	Category   string
+	PartSource string
+}
+
+// Every slot of every machine whose owner hasn't left, with part_source as
+// ListSlotsByMachine labels it, for the machine list's slot LEDs.
+func (q *Queries) ListSlotStates(ctx context.Context) ([]ListSlotStatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSlotStates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSlotStatesRow
+	for rows.Next() {
+		var i ListSlotStatesRow
+		if err := rows.Scan(&i.MachineID, &i.Category, &i.PartSource); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -364,23 +645,49 @@ func (q *Queries) ListPartsByMachine(ctx context.Context, machineID sql.NullInt6
 }
 
 const listSlotsByMachine = `-- name: ListSlotsByMachine :many
-SELECT machine_slots.id, machine_slots.machine_id, machine_slots.category, machine_slots.created_at, parts.id AS part_id, parts.name AS part_name, parts.model AS part_model
+SELECT machine_slots.id, machine_slots.machine_id, machine_slots.category,
+       parts.id AS part_id, parts.name AS part_name, parts.model AS part_model,
+       parts.status AS part_status, parts.price_cents AS part_price_cents,
+       parts.owner_id AS part_owner_id, users.username AS part_owner_name,
+       parts.source_url AS part_source_url,
+       parts.previous_price_cents AS part_previous_price_cents,
+       parts.price_checked_at AS part_price_checked_at,
+       parts.missing_from_source_at AS part_missing_from_source_at,
+       CASE
+         WHEN parts.id IS NULL THEN 'empty'
+         WHEN parts.status = 'wanted' THEN 'unpurchased'
+         WHEN parts.owner_id = machines.owner_id THEN 'own'
+         WHEN users.deleted_at IS NOT NULL THEN 'former_member'
+         ELSE 'borrowed'
+       END AS part_source
 FROM machine_slots
+JOIN machines ON machines.id = machine_slots.machine_id
 LEFT JOIN parts ON parts.slot_id = machine_slots.id
+LEFT JOIN users ON users.id = parts.owner_id
 WHERE machine_slots.machine_id = ?
-ORDER BY machine_slots.id
+ORDER BY machine_slots.position, machine_slots.id
 `
 
 type ListSlotsByMachineRow struct {
-	ID        int64
-	MachineID int64
-	Category  string
-	CreatedAt time.Time
-	PartID    sql.NullInt64
-	PartName  sql.NullString
-	PartModel sql.NullString
+	ID                      int64
+	MachineID               int64
+	Category                string
+	PartID                  sql.NullInt64
+	PartName                sql.NullString
+	PartModel               sql.NullString
+	PartStatus              sql.NullString
+	PartPriceCents          sql.NullInt64
+	PartOwnerID             sql.NullInt64
+	PartOwnerName           sql.NullString
+	PartSourceUrl           sql.NullString
+	PartPreviousPriceCents  sql.NullInt64
+	PartPriceCheckedAt      sql.NullTime
+	PartMissingFromSourceAt sql.NullTime
+	PartSource              string
 }
 
+// part_source labels each slot relative to the machine's owner:
+// empty, unpurchased, own, former_member, or borrowed.
 func (q *Queries) ListSlotsByMachine(ctx context.Context, machineID int64) ([]ListSlotsByMachineRow, error) {
 	rows, err := q.db.QueryContext(ctx, listSlotsByMachine, machineID)
 	if err != nil {
@@ -394,10 +701,18 @@ func (q *Queries) ListSlotsByMachine(ctx context.Context, machineID int64) ([]Li
 			&i.ID,
 			&i.MachineID,
 			&i.Category,
-			&i.CreatedAt,
 			&i.PartID,
 			&i.PartName,
 			&i.PartModel,
+			&i.PartStatus,
+			&i.PartPriceCents,
+			&i.PartOwnerID,
+			&i.PartOwnerName,
+			&i.PartSourceUrl,
+			&i.PartPreviousPriceCents,
+			&i.PartPriceCheckedAt,
+			&i.PartMissingFromSourceAt,
+			&i.PartSource,
 		); err != nil {
 			return nil, err
 		}
@@ -412,115 +727,224 @@ func (q *Queries) ListSlotsByMachine(ctx context.Context, machineID int64) ([]Li
 	return items, nil
 }
 
-const unassignPartsBySlot = `-- name: UnassignPartsBySlot :exec
-UPDATE parts SET slot_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE slot_id = ?
+const listSpareParts = `-- name: ListSpareParts :many
+SELECT parts.id, parts.name, parts.category, parts.status, parts.price_cents,
+       parts.owner_id, users.username AS owner_name
+FROM parts
+JOIN users ON users.id = parts.owner_id
+WHERE parts.slot_id IS NULL AND parts.status <> 'retired'
+  AND users.deleted_at IS NULL
+  AND (parts.owner_id = ?1 OR parts.status = 'owned')
+ORDER BY users.username, parts.name, parts.id
 `
 
-func (q *Queries) UnassignPartsBySlot(ctx context.Context, slotID sql.NullInt64) error {
-	_, err := q.db.ExecContext(ctx, unassignPartsBySlot, slotID)
-	return err
+type ListSparePartsRow struct {
+	ID         int64
+	Name       string
+	Category   sql.NullString
+	Status     string
+	PriceCents sql.NullInt64
+	OwnerID    int64
+	OwnerName  string
 }
 
-const updateMachine = `-- name: UpdateMachine :one
-UPDATE machines
-SET name = ?, description = ?, location = ?, built_on = ?, purchased_on = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, name, description, location, built_on, purchased_on, created_at, updated_at
+// Parts in no slot that the user could put in one of their machines: their
+// own (bought or not), and bought parts of members who haven't left.
+func (q *Queries) ListSpareParts(ctx context.Context, userID int64) ([]ListSparePartsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSpareParts, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSparePartsRow
+	for rows.Next() {
+		var i ListSparePartsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Category,
+			&i.Status,
+			&i.PriceCents,
+			&i.OwnerID,
+			&i.OwnerName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markPartBought = `-- name: MarkPartBought :execrows
+UPDATE parts SET
+    status = 'owned',
+    price_cents = coalesce(?1, price_cents),
+    previous_price_cents = NULL,
+    missing_from_source_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?2 AND owner_id = ?3 AND status = 'wanted'
 `
 
-type UpdateMachineParams struct {
-	Name        string
-	Description sql.NullString
-	Location    sql.NullString
-	BuiltOn     sql.NullTime
-	PurchasedOn sql.NullTime
-	ID          int64
+type MarkPartBoughtParams struct {
+	PriceCents sql.NullInt64
+	ID         int64
+	UserID     int64
 }
 
-func (q *Queries) UpdateMachine(ctx context.Context, arg UpdateMachineParams) (Machine, error) {
-	row := q.db.QueryRowContext(ctx, updateMachine,
-		arg.Name,
-		arg.Description,
-		arg.Location,
-		arg.BuiltOn,
-		arg.PurchasedOn,
+// The owner bought a planned part. Its price becomes what they paid (or
+// stays the last known price), and refreshes leave it alone from now on.
+func (q *Queries) MarkPartBought(ctx context.Context, arg MarkPartBoughtParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markPartBought, arg.PriceCents, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const markPartMissingFromSource = `-- name: MarkPartMissingFromSource :execrows
+UPDATE parts SET
+    previous_price_cents = NULL,
+    missing_from_source_at = ?1,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?2 AND owner_id = ?3 AND status = 'wanted'
+`
+
+type MarkPartMissingFromSourceParams struct {
+	CheckedAt sql.NullTime
+	ID        int64
+	UserID    int64
+}
+
+// The part wasn't on its list at the last refresh. Its price stays as it was.
+func (q *Queries) MarkPartMissingFromSource(ctx context.Context, arg MarkPartMissingFromSourceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markPartMissingFromSource, arg.CheckedAt, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const refreshPartPrice = `-- name: RefreshPartPrice :execrows
+UPDATE parts SET
+    price_cents = coalesce(?1, price_cents),
+    previous_price_cents = CASE
+        WHEN ?1 IS NOT NULL AND price_cents <> ?1 THEN price_cents
+    END,
+    price_checked_at = ?2,
+    missing_from_source_at = NULL,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = ?3 AND owner_id = ?4 AND status = 'wanted'
+`
+
+type RefreshPartPriceParams struct {
+	PriceCents sql.NullInt64
+	CheckedAt  sql.NullTime
+	ID         int64
+	UserID     int64
+}
+
+// Records a price found on the part's list. A NULL price (the list shows
+// none) keeps the old one. previous_price_cents keeps the old price only
+// when this refresh changed it. Bought parts never change.
+// SET expressions all read the row's old values, so the order is free.
+func (q *Queries) RefreshPartPrice(ctx context.Context, arg RefreshPartPriceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, refreshPartPrice,
+		arg.PriceCents,
+		arg.CheckedAt,
 		arg.ID,
+		arg.UserID,
 	)
-	var i Machine
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const softDeleteUser = `-- name: SoftDeleteUser :execrows
+UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL
+`
+
+func (q *Queries) SoftDeleteUser(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, softDeleteUser, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const unassignPart = `-- name: UnassignPart :execrows
+UPDATE parts SET slot_id = NULL, updated_at = CURRENT_TIMESTAMP
+WHERE parts.id = ?1
+  AND (parts.owner_id = ?2 OR parts.slot_id IN (
+    SELECT s.id FROM machine_slots s JOIN machines m ON m.id = s.machine_id
+    WHERE m.owner_id = ?2
+  ))
+`
+
+type UnassignPartParams struct {
+	PartID int64
+	UserID int64
+}
+
+// Either the part's owner or the owner of the machine it sits in.
+func (q *Queries) UnassignPart(ctx context.Context, arg UnassignPartParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, unassignPart, arg.PartID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const upsertDiscordUser = `-- name: UpsertDiscordUser :one
+
+
+INSERT INTO users (discord_id, username, display_name, avatar_hash, last_login_at)
+VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+ON CONFLICT (discord_id) DO UPDATE SET
+    username = excluded.username,
+    display_name = excluded.display_name,
+    avatar_hash = excluded.avatar_hash,
+    last_login_at = CURRENT_TIMESTAMP,
+    deleted_at = NULL
+RETURNING id, discord_id, username, display_name, avatar_hash, is_admin, created_at, last_login_at, deleted_at
+`
+
+type UpsertDiscordUserParams struct {
+	DiscordID   string
+	Username    string
+	DisplayName sql.NullString
+	AvatarHash  sql.NullString
+}
+
+// Queries that change a user's data filter on the acting user, so a write
+// nobody is allowed to make affects 0 rows. :execrows queries report that.
+// Users and sessions --------------------------------------------------------
+// Called on every login: creates the user, refreshes their profile, and
+// restores them if they had left.
+func (q *Queries) UpsertDiscordUser(ctx context.Context, arg UpsertDiscordUserParams) (User, error) {
+	row := q.db.QueryRowContext(ctx, upsertDiscordUser,
+		arg.DiscordID,
+		arg.Username,
+		arg.DisplayName,
+		arg.AvatarHash,
+	)
+	var i User
 	err := row.Scan(
 		&i.ID,
-		&i.Name,
-		&i.Description,
-		&i.Location,
-		&i.BuiltOn,
-		&i.PurchasedOn,
+		&i.DiscordID,
+		&i.Username,
+		&i.DisplayName,
+		&i.AvatarHash,
+		&i.IsAdmin,
 		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const updatePart = `-- name: UpdatePart :one
-UPDATE parts
-SET machine_id = ?, name = ?, category = ?, description = ?, manufacturer = ?, model = ?,
-    serial_number = ?, warranty_expires = ?, purchased_on = ?, purchased_from = ?,
-    purchase_price = ?, guide_url = ?, slot_id = ?, updated_at = CURRENT_TIMESTAMP
-WHERE id = ?
-RETURNING id, machine_id, name, category, description, manufacturer, model, serial_number, warranty_expires, purchased_on, purchased_from, purchase_price, guide_url, created_at, updated_at, slot_id
-`
-
-type UpdatePartParams struct {
-	MachineID       sql.NullInt64
-	Name            string
-	Category        sql.NullString
-	Description     sql.NullString
-	Manufacturer    sql.NullString
-	Model           sql.NullString
-	SerialNumber    sql.NullString
-	WarrantyExpires sql.NullTime
-	PurchasedOn     sql.NullTime
-	PurchasedFrom   sql.NullString
-	PurchasePrice   sql.NullFloat64
-	GuideUrl        sql.NullString
-	SlotID          sql.NullInt64
-	ID              int64
-}
-
-func (q *Queries) UpdatePart(ctx context.Context, arg UpdatePartParams) (Part, error) {
-	row := q.db.QueryRowContext(ctx, updatePart,
-		arg.MachineID,
-		arg.Name,
-		arg.Category,
-		arg.Description,
-		arg.Manufacturer,
-		arg.Model,
-		arg.SerialNumber,
-		arg.WarrantyExpires,
-		arg.PurchasedOn,
-		arg.PurchasedFrom,
-		arg.PurchasePrice,
-		arg.GuideUrl,
-		arg.SlotID,
-		arg.ID,
-	)
-	var i Part
-	err := row.Scan(
-		&i.ID,
-		&i.MachineID,
-		&i.Name,
-		&i.Category,
-		&i.Description,
-		&i.Manufacturer,
-		&i.Model,
-		&i.SerialNumber,
-		&i.WarrantyExpires,
-		&i.PurchasedOn,
-		&i.PurchasedFrom,
-		&i.PurchasePrice,
-		&i.GuideUrl,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.SlotID,
+		&i.LastLoginAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }

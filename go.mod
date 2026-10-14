@@ -1,11 +1,12 @@
 module racket
 
-go 1.26.4
+go 1.26.5
 
 require (
 	github.com/charmbracelet/log v1.0.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/pressly/goose/v3 v3.27.1
+	golang.org/x/oauth2 v0.37.0
 	modernc.org/sqlite v1.53.0
 )
 
@@ -33,7 +34,6 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
-	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	modernc.org/libc v1.73.4 // indirect

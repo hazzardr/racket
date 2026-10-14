@@ -1,48 +1,49 @@
 {{template "page_top" .}}
-  <section>
-    <div class="section-header">
-      <div>
+{{with .Data}}
+  <section class="machine-page">
+    <div class="machine-head">
+      <div class="machine-title">
         <a href="/machines" class="back-link">&larr; Machines</a>
-        <h2 class="section-title">{{.Machine.Name}}</h2>
-        {{if .Machine.Description.Valid}}<p class="description">{{.Machine.Description.String}}</p>{{end}}
-        {{if .Machine.Location.Valid}}<p class="location">{{.Machine.Location.String}}</p>{{end}}
-        <p class="meta">
-          {{- if .Machine.BuiltOn.Valid}}built {{.Machine.BuiltOn.Time.Format "2006-01-02"}}{{end}}
-          {{- if .Machine.PurchasedOn.Valid}} purchased {{.Machine.PurchasedOn.Time.Format "2006-01-02"}}{{end}}
+        <h2 class="section-title">{{.Machine.Name}}{{if ne .Machine.Status "active"}} <span class="badge">{{.Machine.Status}}</span>{{end}}</h2>
+        <p class="meta">{{if .IsOwner}}yours{{else}}{{.OwnerName}}'s{{end}} {{.Machine.Kind}}
+          {{- if .Machine.FormFactor.Valid}} · {{.Machine.FormFactor.String}}{{end}}
+          {{- if .Machine.Location.Valid}} · {{.Machine.Location.String}}{{end}}
+          {{- if .Machine.BuiltOn.Valid}} · built {{.Machine.BuiltOn.Time.Format "2006-01-02"}}{{end}}
+          {{- if .Machine.PurchasedOn.Valid}} · purchased {{.Machine.PurchasedOn.Time.Format "2006-01-02"}}{{end}}
         </p>
+        {{if .Machine.Description.Valid}}<p class="description">{{.Machine.Description.String}}</p>{{end}}
       </div>
-      <form method="post" action="/machines/{{.Machine.ID}}/delete" class="inline-form"
-            hx-post="/machines/{{.Machine.ID}}/delete" hx-confirm="Delete {{.Machine.Name}}?">
-        <button type="submit" class="btn-danger">Delete machine</button>
-      </form>
-    </div>
-
-    <div class="slots-grid">
-      {{range .Slots}}{{template "slot_card" .}}{{end}}
-      <div class="card slot-card add-slot-card" id="add-slot-card">
-        {{template "category_chips" .}}
-        <form class="slot-form" method="post" action="/machines/{{.Machine.ID}}/slots"
-              hx-post="/machines/{{.Machine.ID}}/slots" hx-target="#add-slot-card" hx-swap="beforebegin">
-          <input name="category" type="text" placeholder="Slot category" required>
-          <button type="submit" class="btn btn-small">Add slot</button>
+      {{if .IsOwner}}
+      <div class="machine-actions">
+        <form method="post" action="/machines/{{.Machine.ID}}/delete" class="inline-form"
+              hx-post="/machines/{{.Machine.ID}}/delete" hx-confirm="Delete {{.Machine.Name}}?">
+          <button type="submit" class="btn-danger">Delete machine</button>
         </form>
       </div>
+      {{end}}
     </div>
 
-    {{if .Parts}}
-    <div class="other-parts">
-      <h3>Other parts</h3>
-      <div class="card">
-        <ul>
-          {{range .Parts}}
-          <li>
-            {{.Name}}
-            {{if .Category.Valid}}<span class="part-category">{{.Category.String}}</span>{{end}}
-          </li>
-          {{end}}
-        </ul>
-      </div>
-    </div>
+    {{if .PriceLists}}
+    <details class="card price-update">
+      <summary>
+        Update prices
+        {{- if not .PricesCheckedAt.IsZero}} <span class="meta">from PCPartPicker, checked {{ago .PricesCheckedAt}}</span>{{end}}
+      </summary>
+      <p class="meta">
+        Copy the list again on PCPartPicker (Markup, then the Text tab) and paste it here.
+        Parts you've bought keep the price you paid.
+      </p>
+      <p class="meta">
+        From {{range $i, $list := .PriceLists}}{{if $i}}, {{end}}<a href="{{$list}}" target="_blank" rel="noopener noreferrer" class="external-link">{{$list}}</a>{{end}}
+      </p>
+      <form class="form" method="post" action="/machines/{{.Machine.ID}}/prices">
+        <textarea name="list" rows="6" required placeholder="PCPartPicker Part List: https://pcpartpicker.com/list/…"></textarea>
+        <div class="form-actions"><button type="submit" class="btn btn-small">Update prices</button></div>
+      </form>
+    </details>
     {{end}}
+
+    {{template "machine_board" .}}
   </section>
+{{end}}
 {{template "page_bottom" .}}

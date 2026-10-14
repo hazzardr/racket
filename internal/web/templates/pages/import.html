@@ -1,47 +1,86 @@
 {{template "page_top" .}}
-<section>
-  <h2 class="section-title">Import parts</h2>
-  <p class="lead">
-    Import from PCPartPicker as a new machine, or attach it to an existing one
-      by filling in its name.
-  </p>
-  {{if .Error}}<div class="status error">{{.Error}}</div>{{end}}
+{{with .Data}}
+<section class="import-page">
+  <div class="page-head">
+    <div>
+      <h2 class="page-title">Import parts</h2>
+      <p class="page-lead">
+        Import from PCPartPicker into a new machine, or into one of yours by
+          filling in its name. Each part goes into a slot of its type.
+      </p>
+    </div>
+  </div>
+  {{if .Error}}<div class="status error" role="alert">{{.Error}}</div>{{end}}
   <div class="import-grid">
-    <div class="card">
-      <h3>
-        From
-        <a href="https://pcpartpicker.com" target="_blank" rel="noopener noreferrer" class="external-link">PCPartPicker<span class="external-link-icon" aria-label="(opens in new tab)">&#8599;</span></a>
-      </h3>
+    <div class="panel import-main">
+      <div class="panel-head">
+        <h3>
+          From
+          <a href="https://pcpartpicker.com" target="_blank" rel="noopener noreferrer" class="external-link">PCPartPicker<span class="external-link-icon" aria-label="(opens in new tab)">&#8599;</span></a>
+        </h3>
+        <p class="panel-note">
+          On your list's page, choose <strong>Markup</strong>, then the <strong>Text</strong> tab.
+          Copy all of it and paste it here.
+        </p>
+      </div>
       <form class="form" method="post" action="/import">
-        <label>
-          List URL
-          <input name="pcpartpicker_url" type="url" placeholder="https://pcpartpicker.com/list/XXXXXX" value="{{.URL}}" required>
+        <label class="field">
+          <span class="field-label">Your list</span>
+          <textarea class="paste" name="pcpartpicker_text" rows="11" required
+                    placeholder="PCPartPicker Part List: https://pcpartpicker.com/list/…&#10;&#10;CPU: AMD Ryzen 7 9800X3D …  ($444.00 @ Amazon)">{{.PCPPText}}</textarea>
         </label>
-        <label>
-          Machine name (optional)
+        <label class="field">
+          <span class="field-label">Machine name (optional)</span>
           <input name="machine_name" type="text" value="{{.MachineName}}">
         </label>
-        <div class="form-actions">
-          <button type="submit" class="btn">Import from URL</button>
+        <div class="form-actions form-actions-split">
+          <label class="checkbox">
+            <input name="wanted" type="checkbox"{{if .Wanted}} checked{{end}}>
+            Not bought yet (a planned build)
+          </label>
+          <button type="submit" class="btn">Import list</button>
         </div>
       </form>
     </div>
-    <div class="card">
-      <h3>From CSV</h3>
-      <form class="form" method="post" action="/import" enctype="multipart/form-data">
-        <label>
-          CSV file
-          <input name="file" type="file" accept=".csv,.txt" required>
-        </label>
-        <label>
-          Machine name (optional)
-          <input name="machine_name" type="text" value="{{.MachineName}}">
-        </label>
-        <div class="form-actions">
-          <button type="submit" class="btn">Import CSV</button>
+
+    <div class="import-side">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>From CSV</h3>
         </div>
-      </form>
+        <form class="form" method="post" action="/import" enctype="multipart/form-data">
+          <label class="field">
+            <span class="field-label">CSV file</span>
+            <input name="file" type="file" accept=".csv,.txt" required>
+          </label>
+          <label class="field">
+            <span class="field-label">Machine name (optional)</span>
+            <input name="machine_name" type="text" value="{{.MachineName}}">
+          </label>
+          <label class="checkbox">
+            <input name="wanted" type="checkbox"{{if .Wanted}} checked{{end}}>
+            Not bought yet (a planned build)
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn">Import CSV</button>
+          </div>
+        </form>
+      </div>
+
+      {{if .Renames}}
+      <div class="panel import-map">
+        <span class="eyebrow">Where parts go</span>
+        <p class="panel-note">A few PCPartPicker types go into a slot with a shorter name:</p>
+        <ul class="renames">
+          {{range .Renames}}
+          <li style="{{.Style}}"><span class="rn-from">{{.From}}</span><i class="rn-wire" aria-hidden="true"></i><span class="rn-to">{{.To}}</span></li>
+          {{end}}
+        </ul>
+        <p class="panel-note">Every other type keeps its own name, like CPU Cooler.</p>
+      </div>
+      {{end}}
     </div>
   </div>
 </section>
+{{end}}
 {{template "page_bottom" .}}

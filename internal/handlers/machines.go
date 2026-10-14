@@ -1,11 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"racket/internal/db"
@@ -17,75 +20,197 @@ var defaultSlots = []string{"Motherboard", "CPU", "RAM", "RAM", "Storage", "Stor
 // commonSlots are the category chips offered on the machine detail page.
 var commonSlots = []string{"Motherboard", "CPU", "RAM", "Storage", "GPU", "PSU", "Case"}
 
-// machineRow is a machine list entry with computed slot-fill and price totals.
+// Part and machine statuses used in code; the full sets are the CHECK
+// constraints in the schema.
+const (
+	partOwned     = "owned"
+	partWanted    = "wanted"
+	machineActive = "active"
+)
+
+// machineKinds and machineStatuses mirror the CHECK constraints on machines.
+//
+//nolint:goconst // enumerations of the schema's values; tests reuse the literals
+var (
+	machineKinds    = []string{"desktop", "server", "nas", "network", "laptop", "other"}
+	machineStatuses = []string{"planned", machineActive, "retired"}
+)
+
+// seedDefaultSlots creates the default slot categories for a new machine.
+// Failures are logged but not fatal (slots can be added manually later).
+func (h *Handler) seedDefaultSlots(ctx context.Context, q *db.Queries, machineID int64) {
+	for _, cat := range defaultSlots {
+		if _, err := q.CreateSlot(ctx, db.CreateSlotParams{MachineID: machineID, Category: cat}); err != nil {
+			slog.WarnContext(ctx, "failed to seed slot", "machine", machineID, "category", cat, "error", err)
+		}
+	}
+}
+
+// machinesPage is the machine list page data: the viewer's machines, then
+// everyone else's.
+type machinesPage struct {
+	Mine   []machineRow
+	Others []machineRow
+}
+
+// machineRow is one machine in the list; Mine says the viewer owns it.
 type machineRow struct {
-	Machine     db.Machine
-	FilledSlots int
-	TotalSlots  int
-	PartsTotal  float64
+	db.ListMachinesRow
+	Mine bool
+	// LEDs are the machine's slots in board order, drawn as a strip of
+	// lights on its card. Counts tallies them by slot state.
+	LEDs   []slotLED
+	Counts map[string]int
+}
+
+// slotLED is one slot as a light on a machine card or a bay in the new
+// machine preview.
+type slotLED struct {
+	Category string
+	Code     string
+	State    string
+	Style    template.CSS
+}
+
+func newSlotLED(category, state string) slotLED {
+	return slotLED{Category: category, Code: styleOf(category).code, State: state, Style: typeStyle(category)}
 }
 
 // newMachinePage is the new-machine form state (also used for validation re-renders).
 type newMachinePage struct {
 	Error       string
 	Name        string
+	Kind        string
+	Status      string
 	Description string
 	Location    string
 	BuiltOn     string
 	PurchasedOn string
+	Kinds       []string
+	Statuses    []string
+	// Slots are the slots a new machine starts with, for the preview.
+	Slots []slotLED
 }
 
-// MachinePage is the machine detail page data.
-type MachinePage struct {
-	Machine db.Machine
-	Slots   []slotCard
-	Parts   []db.Part // unassigned to any slot
-	Cats    []string
+// newMachineForm is the new-machine form's starting state.
+func newMachineForm() newMachinePage {
+	page := newMachinePage{
+		Kind:     machineKinds[0],
+		Status:   machineActive,
+		Kinds:    machineKinds,
+		Statuses: machineStatuses,
+	}
+	for _, category := range defaultSlots {
+		page.Slots = append(page.Slots, newSlotLED(category, stateEmpty))
+	}
+	return page
 }
 
-func (h *Handler) Landing(w http.ResponseWriter, _ *http.Request) {
-	h.web.Render(w, http.StatusOK, "landing.html", nil)
+// landingPage is the landing page data: the slots a new machine starts with
+// and the PCPartPicker type mapping, so the import demo sorts its sample
+// list the way a real import does, and the board's category styles, so its
+// board looks like a machine page.
+type landingPage struct {
+	Demo importDemo
+}
+
+type importDemo struct {
+	Slots     []string
+	SlotMap   map[string]string
+	OtherSlot string
+	// Styles is keyed by categoryKey.
+	Styles map[string]demoStyle
+}
+
+// demoStyle is a categoryStyle the demo can read.
+type demoStyle struct {
+	Code  string
+	Color string
+}
+
+func (h *Handler) Landing(w http.ResponseWriter, r *http.Request) {
+	styles := make(map[string]demoStyle, len(categoryStyles)+1)
+	for key := range categoryStyles {
+		s := styleOf(key)
+		styles[key] = demoStyle{Code: s.code, Color: s.color}
+	}
+	other := styleOf(otherSlot)
+	styles[categoryKey(otherSlot)] = demoStyle{Code: other.code, Color: other.color}
+	h.render(w, r, http.StatusOK, "landing.html", landingPage{Demo: importDemo{
+		Slots:     defaultSlots,
+		SlotMap:   pcppSlotCategories,
+		OtherSlot: otherSlot,
+		Styles:    styles,
+	}})
 }
 
 func (h *Handler) MachinesPage(w http.ResponseWriter, r *http.Request) {
 	machines, err := h.queries.ListMachines(r.Context())
 	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
-
-	rows := make([]machineRow, 0, len(machines))
-	for _, m := range machines {
-		row := machineRow{Machine: m}
-		slots, err := h.queries.ListSlotsByMachine(r.Context(), m.ID)
-		if err != nil {
-			h.renderError(w, r, http.StatusInternalServerError, err.Error())
-			return
-		}
-		row.TotalSlots = len(slots)
-		for _, s := range slots {
-			if s.PartID.Valid {
-				row.FilledSlots++
-			}
-		}
-		parts, err := h.queries.ListPartsByMachine(r.Context(), sql.NullInt64{Int64: m.ID, Valid: true})
-		if err != nil {
-			h.renderError(w, r, http.StatusInternalServerError, err.Error())
-			return
-		}
-		for _, p := range parts {
-			if p.PurchasePrice.Valid {
-				row.PartsTotal += p.PurchasePrice.Float64
-			}
-		}
-		rows = append(rows, row)
+	states, err := h.queries.ListSlotStates(r.Context())
+	if err != nil {
+		h.serverError(w, r, err)
+		return
 	}
-
-	h.web.Render(w, http.StatusOK, "machines.html", rows)
+	leds := make(map[int64][]slotLED)
+	for _, s := range states {
+		leds[s.MachineID] = append(leds[s.MachineID], newSlotLED(s.Category, slotState(s.PartSource)))
+	}
+	var page machinesPage
+	for _, m := range machines {
+		row := machineRow{ListMachinesRow: m, LEDs: leds[m.Machine.ID], Counts: map[string]int{}}
+		for _, led := range row.LEDs {
+			row.Counts[led.State]++
+		}
+		if m.Machine.OwnerID == viewer(r).ID {
+			row.Mine = true
+			page.Mine = append(page.Mine, row)
+		} else {
+			page.Others = append(page.Others, row)
+		}
+	}
+	h.render(w, r, http.StatusOK, "machines.html", page)
 }
 
-func (h *Handler) NewMachinePage(w http.ResponseWriter, _ *http.Request) {
-	h.web.Render(w, http.StatusOK, "new_machine.html", newMachinePage{})
+func (h *Handler) NewMachinePage(w http.ResponseWriter, r *http.Request) {
+	h.render(w, r, http.StatusOK, "new_machine.html", newMachineForm())
+}
+
+// getMachine fetches a machine whose owner hasn't left, or renders the error
+// response and returns false.
+func (h *Handler) getMachine(w http.ResponseWriter, r *http.Request, id int64) (db.GetMachineRow, bool) {
+	machine, err := h.queries.GetMachine(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			h.renderError(w, r, http.StatusNotFound, "Machine not found.")
+			return db.GetMachineRow{}, false
+		}
+		h.serverError(w, r, err)
+		return db.GetMachineRow{}, false
+	}
+	return machine, true
+}
+
+// ownMachine is getMachine for changes: it also renders a 403 unless the
+// viewer owns the machine.
+func (h *Handler) ownMachine(w http.ResponseWriter, r *http.Request) (db.GetMachineRow, bool) {
+	id, err := parseID(r, "id")
+	if err != nil {
+		h.renderError(w, r, http.StatusBadRequest, "invalid machine id")
+		return db.GetMachineRow{}, false
+	}
+	machine, ok := h.getMachine(w, r, id)
+	if !ok {
+		return db.GetMachineRow{}, false
+	}
+	if machine.Machine.OwnerID != viewer(r).ID {
+		h.forbidden(w, r)
+		return db.GetMachineRow{}, false
+	}
+	return machine, true
 }
 
 func (h *Handler) MachineDetailPage(w http.ResponseWriter, r *http.Request) {
@@ -94,42 +219,16 @@ func (h *Handler) MachineDetailPage(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, r, http.StatusBadRequest, "invalid machine id")
 		return
 	}
-	machine, err := h.queries.GetMachine(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			h.renderError(w, r, http.StatusNotFound, "Machine not found.")
-			return
-		}
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+	machine, ok := h.getMachine(w, r, id)
+	if !ok {
 		return
 	}
-	slots, err := h.queries.ListSlotsByMachine(r.Context(), id)
+	page, err := h.machineBoard(r.Context(), machine, viewer(r).ID)
 	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
+		h.serverError(w, r, err)
 		return
 	}
-	parts, err := h.queries.ListPartsByMachine(r.Context(), sql.NullInt64{Int64: id, Valid: true})
-	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
-		return
-	}
-	unassigned := make([]db.Part, 0, len(parts))
-	for _, p := range parts {
-		if !p.SlotID.Valid {
-			unassigned = append(unassigned, p)
-		}
-	}
-	cards := make([]slotCard, len(slots))
-	for i, s := range slots {
-		cards[i] = slotCard{ListSlotsByMachineRow: s}
-	}
-
-	h.web.Render(w, http.StatusOK, "machine_detail.html", MachinePage{
-		Machine: machine,
-		Slots:   cards,
-		Parts:   unassigned,
-		Cats:    commonSlots,
-	})
+	h.render(w, r, http.StatusOK, "machine_detail.html", page)
 }
 
 // CreateMachine handles POST /machines (form). On success it seeds the default
@@ -141,59 +240,69 @@ func (h *Handler) CreateMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page := newMachinePage{
-		Name:        strings.TrimSpace(r.FormValue("name")),
-		Description: strings.TrimSpace(r.FormValue("description")),
-		Location:    strings.TrimSpace(r.FormValue("location")),
-		BuiltOn:     r.FormValue("built_on"),
-		PurchasedOn: r.FormValue("purchased_on"),
+	page := newMachineForm()
+	page.Name = strings.TrimSpace(r.FormValue("name"))
+	if kind := r.FormValue("kind"); kind != "" {
+		page.Kind = kind
 	}
-	if page.Name == "" {
+	if status := r.FormValue("status"); status != "" {
+		page.Status = status
+	}
+	page.Description = strings.TrimSpace(r.FormValue("description"))
+	page.Location = strings.TrimSpace(r.FormValue("location"))
+	page.BuiltOn = r.FormValue("built_on")
+	page.PurchasedOn = r.FormValue("purchased_on")
+	switch {
+	case page.Name == "":
 		page.Error = "Name is required."
-		h.web.Render(w, http.StatusUnprocessableEntity, "new_machine.html", page)
+	case !slices.Contains(machineKinds, page.Kind):
+		page.Error = "Pick a kind from the list."
+	case !slices.Contains(machineStatuses, page.Status):
+		page.Error = "Pick a status from the list."
+	}
+	if page.Error != "" {
+		h.render(w, r, http.StatusUnprocessableEntity, "new_machine.html", page)
 		return
 	}
 
 	machine, err := h.queries.CreateMachine(r.Context(), db.CreateMachineParams{
+		OwnerID:     viewer(r).ID,
 		Name:        page.Name,
+		Kind:        page.Kind,
+		Status:      page.Status,
 		Description: optionalString(page.Description),
 		Location:    optionalString(page.Location),
 		BuiltOn:     parseDate(page.BuiltOn),
 		PurchasedOn: parseDate(page.PurchasedOn),
 	})
 	if err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
-		return
-	}
-	for _, cat := range defaultSlots {
-		_, err := h.queries.CreateSlot(r.Context(), db.CreateSlotParams{MachineID: machine.ID, Category: cat})
-		if err != nil {
-			slog.WarnContext(r.Context(), "failed to seed slot", "machine", machine.ID, "category", cat, "error", err)
+		if isUniqueViolation(err) {
+			page.Error = fmt.Sprintf("You already have a machine named %q.", page.Name)
+			h.render(w, r, http.StatusUnprocessableEntity, "new_machine.html", page)
+			return
 		}
-	}
-
-	url := fmt.Sprintf("/machines/%d", machine.ID)
-	if r.Header.Get("Hx-Request") == "" {
-		http.Redirect(w, r, url, http.StatusSeeOther)
+		h.serverError(w, r, err)
 		return
 	}
-	w.Header().Set("Hx-Redirect", url)
+	h.seedDefaultSlots(r.Context(), h.queries, machine.ID)
+
+	redirectNativeOrHX(w, r, fmt.Sprintf("%s/%d", machinesPath, machine.ID))
 }
 
 // DeleteMachine handles POST /machines/{id}/delete and redirects to the list.
+// Parts in the machine go back to their owners' inventories.
 func (h *Handler) DeleteMachine(w http.ResponseWriter, r *http.Request) {
-	id, err := parseID(r, "id")
+	machine, ok := h.ownMachine(w, r)
+	if !ok {
+		return
+	}
+	_, err := h.queries.DeleteMachine(r.Context(), db.DeleteMachineParams{
+		ID:      machine.Machine.ID,
+		OwnerID: viewer(r).ID,
+	})
 	if err != nil {
-		h.renderError(w, r, http.StatusBadRequest, "invalid machine id")
+		h.serverError(w, r, err)
 		return
 	}
-	if err := h.queries.DeleteMachine(r.Context(), id); err != nil {
-		h.renderError(w, r, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if r.Header.Get("Hx-Request") == "" {
-		http.Redirect(w, r, "/machines", http.StatusSeeOther)
-		return
-	}
-	w.Header().Set("Hx-Redirect", "/machines")
+	redirectNativeOrHX(w, r, machinesPath)
 }
