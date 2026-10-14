@@ -258,6 +258,7 @@ func TestRenderTemplates(t *testing.T) {
 		t.Fatal(err)
 	}
 	user := &db.User{ID: 1, Username: "alice"}
+	board := []slotCard{{CanEdit: true, State: stateEmpty}}
 
 	pages := []struct {
 		name string
@@ -269,7 +270,10 @@ func TestRenderTemplates(t *testing.T) {
 		{"login.html", loginPage{Discord: true, DevLogin: true}},
 		{"machines.html", machinesPage{Mine: []machineRow{{Mine: true}}, Others: []machineRow{{}}}},
 		{"new_machine.html", newMachinePage{Kinds: machineKinds, Statuses: machineStatuses}},
-		{"machine_detail.html", MachinePage{IsOwner: true, Slots: []slotCard{{CanEdit: true}}, Cats: commonSlots}},
+		{"machine_detail.html", MachinePage{
+			IsOwner: true, Slots: board, Left: board, Spares: []sparePart{{Mine: true}}, HasMine: true,
+			Cats: []legendEntry{{Name: "CPU"}}, Counts: map[string]int{},
+		}},
 	}
 
 	for _, p := range pages {

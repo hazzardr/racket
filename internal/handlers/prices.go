@@ -139,7 +139,7 @@ func (h *Handler) MarkPartBought(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !row.PartID.Valid {
-		h.finishSlotAction(w, r, slot, "")
+		h.finishSlotAction(w, r, slot, boardNote{})
 		return
 	}
 	var price sql.NullInt64
@@ -154,8 +154,8 @@ func (h *Handler) MarkPartBought(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if n == 0 {
-		h.finishSlotAction(w, r, slot, "Only your own parts that aren't bought yet can be marked bought.")
+		h.finishSlotAction(w, r, slot, boardNote{err: "Only your own parts that aren't bought yet can be marked bought."})
 		return
 	}
-	h.finishSlotAction(w, r, slot, "")
+	h.finishSlotAction(w, r, slot, boardNote{seated: true})
 }

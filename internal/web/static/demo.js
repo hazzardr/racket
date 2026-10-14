@@ -1,15 +1,18 @@
-// The landing page demo: imports a sample PCPartPicker list into a build
-// sheet, then lets visitors mark parts bought and borrow a friend's spare.
-// Nothing is saved. The server supplies the default slots and the part-type
-// mapping (see landingPage in internal/handlers), so parts land where a real
-// import would put them.
+// The landing page demo: imports a sample PCPartPicker list into a machine
+// board, then lets visitors mark parts bought and borrow a friend's spare.
+// Nothing is saved. The board uses the machine page's markup, and board.js
+// draws its wires and handles hovering, dragging, and clicking; this keeps
+// the build and re-renders the board after each change. The server supplies
+// the default slots, the part-type mapping, and the category colors (see
+// landingPage in internal/handlers), so parts land where a real import would
+// put them and look the way they would on a machine page.
 (() => {
   "use strict";
 
   const root = document.getElementById("demo");
   const configEl = document.getElementById("demo-config");
   const config = configEl ? JSON.parse(configEl.textContent || "null") : null;
-  if (!root || !config || !config.Slots) {
+  if (!root || !config || !config.Slots || !window.RacketBoard) {
     return;
   }
 
@@ -29,30 +32,26 @@
 
   // The friend's spare. A borrowed part keeps its owner and has no price
   // for the builder.
-  const SPARE = { name: "Crucial P3 Plus 2 TB NVMe", owner: "sam", category: "Storage" };
+  const SPARE = { id: "spare", name: "Crucial P3 Plus 2 TB NVMe", owner: "sam", category: "Storage" };
 
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const $ = (sel) => root.querySelector(sel);
-  const form = $(".demo-import");
+  const form = $(".demo-form");
   const pasteEl = $(".demo-paste");
   const goBtn = $(".demo-go");
   const wantedBox = $(".demo-wanted");
   const rowsEl = $(".demo-rows");
   const statusEl = $(".demo-status");
-  const slotsEl = $(".demo-slots");
-  const meterEl = $(".demo-meter span");
-  const filledEl = $(".demo-filled");
-  const totalEl = $(".demo-total");
-  const toBuyEl = $(".demo-tobuy");
-  const friendEl = $(".demo-friend");
-  const spareBtn = $(".demo-spare");
+  const board = $(".demo-board");
+  const trayEl = $(".demo-tray");
+  const sparesEl = $(".demo-spares");
 
   let slots = [];
   let nextSlotID = 1;
+  let spareLent = false;
   let running = false;
   let played = false;
-  let dragging = false;
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, reduceMotion ? Math.min(ms, 80) : ms));
 
@@ -82,32 +81,97 @@
     return (config.SlotMap || {})[partType.toLowerCase()] || partType;
   }
 
+  // keyOf and styleOf mirror categoryKey and styleOf in
+  // internal/handlers/board.go, for the categories the server sent.
+  const keyOf = (category) => category.trim().toLowerCase();
+
+  function styleOf(category) {
+    const style = (config.Styles || {})[keyOf(category)];
+    if (style) {
+      return style;
+    }
+    const code = category.replace(/[^\p{L}\p{N}]/gu, "").toUpperCase().slice(0, 4) || "?";
+    return { Code: code, Color: "#94a3b8" };
+  }
+
+  function stateOf(part) {
+    if (!part) {
+      return "empty";
+    }
+    if (part.from) {
+      return "borrowed";
+    }
+    return part.wanted ? "wanted" : "owned";
+  }
+
   function setStatus(text) {
     statusEl.textContent = text;
   }
 
-  function pop(node) {
-    if (!reduceMotion) {
-      node.animate([{ transform: "scale(0.94)" }, { transform: "scale(1)" }], { duration: 240, easing: "ease-out" });
-    }
+  /* ---------- The board, in partials/slot_card.html's markup ---------- */
+
+  function chipFor(part) {
+    const state = stateOf(part);
+    const label = { owned: "installed", wanted: "not bought yet", empty: "empty" }[state] ?? `from ${part.from}`;
+    return el("span", `chip k-${state}`, label);
   }
 
-  // fly animates a copy of the part from its list row into its slot.
-  function fly(from, to, label) {
-    if (reduceMotion) {
-      return Promise.resolve();
+  function metaFor(part) {
+    if (!part) {
+      return spareLent ? "Nothing in it yet" : "Drop a spare here";
     }
-    const a = from.getBoundingClientRect();
-    const b = to.getBoundingClientRect();
-    const ghost = el("div", "demo-ghost", label);
-    document.body.append(ghost);
-    const box = (r) => ({ left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
-    const anim = ghost.animate([{ ...box(a), opacity: 1 }, { ...box(b), opacity: 0.7 }], {
-      duration: 560,
-      easing: "cubic-bezier(0.5, 0, 0.2, 1)",
-      fill: "forwards",
-    });
-    return anim.finished.catch(() => {}).finally(() => ghost.remove());
+    if (part.from) {
+      return "on loan";
+    }
+    return part.wanted ? `est. $${money(part.cents)}` : `$${money(part.cents)}`;
+  }
+
+  // actionFor says what clicking a slot's card does.
+  function actionFor(part) {
+    if (!part) {
+      return "";
+    }
+    if (part.from) {
+      return `Click to give it back to ${part.from}`;
+    }
+    return part.wanted ? "Click to mark it bought" : "Click to mark it not bought yet";
+  }
+
+  function cardFor(slot) {
+    const state = stateOf(slot.part);
+    const card = el("button", `slot-card k-${state}`);
+    card.type = "button";
+    card.dataset.slot = String(slot.id);
+    card.dataset.cat = keyOf(slot.category);
+    card.style.setProperty("--type", styleOf(slot.category).Color);
+    card.title = actionFor(slot.part);
+    const top = el("span", "slot-top");
+    top.append(el("span", "slot-cat", slot.category), chipFor(slot.part));
+    card.append(top, el("span", "slot-name", slot.part ? slot.part.name : "Empty slot"), el("span", "slot-meta", metaFor(slot.part)));
+    return card;
+  }
+
+  function bayFor(slot) {
+    const style = styleOf(slot.category);
+    const bay = el("div", `bay k-${stateOf(slot.part)}`);
+    bay.dataset.slot = String(slot.id);
+    bay.style.setProperty("--type", style.Color);
+    bay.title = slot.category;
+    bay.append(el("i", "led"), el("span", "", style.Code));
+    return bay;
+  }
+
+  function spareChip() {
+    const chip = el("button", "spare k-owned");
+    chip.type = "button";
+    chip.dataset.part = SPARE.id;
+    chip.dataset.cat = keyOf(SPARE.category);
+    chip.style.setProperty("--type", styleOf(SPARE.category).Color);
+    chip.setAttribute("aria-pressed", "false");
+    const meta = el("span", "sp-meta", `${SPARE.category} · `);
+    meta.append(el("b", "", `${SPARE.owner}'s`));
+    chip.append(el("i", "sp-port"), el("span", "sp-name", SPARE.name), meta);
+    return chip;
   }
 
   // countTo animates a dollar amount to its new value.
@@ -132,144 +196,129 @@
     requestAnimationFrame(step);
   }
 
-  // updateTotals sums the build like the machine page does.
-  function updateTotals() {
-    let filled = 0;
+  // renderTotals sums the build like the machine page does.
+  function renderTotals() {
+    const counts = { owned: 0, borrowed: 0, wanted: 0, empty: 0 };
     let total = 0;
     let toBuy = 0;
     for (const slot of slots) {
-      if (!slot.part) {
-        continue;
-      }
-      filled++;
-      if (slot.part.cents != null) {
+      counts[stateOf(slot.part)]++;
+      if (slot.part && slot.part.cents != null) {
         total += slot.part.cents;
         if (slot.part.wanted) {
           toBuy += slot.part.cents;
         }
       }
     }
-    filledEl.textContent = `${filled} / ${slots.length}`;
-    meterEl.style.width = slots.length ? `${(filled * 100) / slots.length}%` : "0";
-    countTo(totalEl, total);
-    countTo(toBuyEl, toBuy);
+    const filled = slots.length - counts.empty;
+    $(".demo-filled").textContent = `${filled} / ${slots.length}`;
+    $(".demo-foot").textContent = `${filled} of ${slots.length} slots filled`;
+    for (const [state, n] of Object.entries(counts)) {
+      $(`.demo-meter .k-${state}`).style.flexGrow = String(n);
+    }
+    countTo($(".demo-total"), total);
+    countTo($(".demo-tobuy"), toBuy);
   }
 
-  function renderSlot(slot) {
-    const node = slot.el;
-    const part = slot.part;
-    node.replaceChildren(el("span", "demo-slot-cat", slot.category));
-    node.classList.toggle("is-empty", !part);
-    node.classList.toggle("is-wanted", Boolean(part && part.wanted));
-    node.classList.toggle("is-borrowed", Boolean(part && part.from));
-    if (!part) {
-      node.append(el("span", "demo-slot-empty", "Empty"));
-      return;
+  function renderLegend() {
+    const seen = new Map();
+    for (const slot of slots) {
+      seen.set(keyOf(slot.category), slot.category);
     }
-    node.append(el("span", "demo-slot-part", part.name));
-    const foot = el("span", "demo-slot-foot");
-    if (part.cents != null) {
-      foot.append(el("span", "part-price", `$${money(part.cents)}`));
-    }
-    if (part.from) {
-      const back = el("button", "btn-link demo-return", "Return");
-      back.type = "button";
-      back.addEventListener("click", () => returnSpare(slot));
-      foot.append(el("span", "part-badge badge-borrowed", `from ${part.from}`), back);
+    const entries = [...seen.values()].map((category) => {
+      const entry = el("span", "lg lg-types");
+      const swatch = el("i", "lg-sw");
+      swatch.style.setProperty("--type", styleOf(category).Color);
+      entry.append(swatch, category);
+      return entry;
+    });
+    $(".demo-types").replaceChildren(...entries);
+  }
+
+  // render redraws the board. seated names the slot a part just went into,
+  // so board.js draws its wire in.
+  function render(seated) {
+    const half = Math.ceil(slots.length / 2);
+    const [left, right] = [slots.slice(0, half), slots.slice(half)];
+    $(".col-left").replaceChildren(...left.map(cardFor));
+    $(".col-right").replaceChildren(...right.map(cardFor));
+    $(".bay-col.left").replaceChildren(...left.map(bayFor));
+    $(".bay-col.right").replaceChildren(...right.map(bayFor));
+    if (spareLent) {
+      sparesEl.replaceChildren(el("p", "none", `${SPARE.owner}'s SSD is in your build. Click its slot to give it back.`));
     } else {
-      const toggle = el("button", "part-badge demo-toggle", part.wanted ? "not bought yet" : "bought");
-      toggle.type = "button";
-      toggle.title = part.wanted ? "Mark as bought" : "Mark as not bought yet";
-      toggle.addEventListener("click", () => {
-        part.wanted = !part.wanted;
-        renderSlot(slot);
-        pop(slot.el);
-        updateTotals();
-        slot.el.querySelector(".demo-toggle").focus();
-      });
-      foot.append(toggle);
+      sparesEl.replaceChildren(spareChip());
     }
-    node.append(foot);
+    renderTotals();
+    renderLegend();
+    if (seated != null) {
+      board.dataset.seated = String(seated);
+    } else {
+      delete board.dataset.seated;
+    }
+    window.RacketBoard.mount(board);
   }
 
-  function addSlot(category, isNew) {
-    const slot = { id: nextSlotID++, category, part: null, el: el("div", "demo-slot") };
-    slot.el.classList.toggle("is-new", Boolean(isNew));
-    slot.el.addEventListener("dragover", (e) => {
-      if (dragging && !slot.part) {
-        e.preventDefault();
-        slot.el.classList.add("is-over");
-      }
-    });
-    slot.el.addEventListener("dragleave", () => slot.el.classList.remove("is-over"));
-    slot.el.addEventListener("drop", (e) => {
-      e.preventDefault();
-      slot.el.classList.remove("is-over");
-      if (!slot.part) {
-        lendSpare(slot);
-      }
-    });
+  function addSlot(category) {
+    const slot = { id: nextSlotID++, category, part: null };
     slots.push(slot);
-    renderSlot(slot);
-    slotsEl.append(slot.el);
     return slot;
   }
 
   function resetBuild() {
     slots = [];
     nextSlotID = 1;
-    slotsEl.replaceChildren();
+    spareLent = false;
     for (const category of config.Slots) {
-      addSlot(category, false);
+      addSlot(category);
     }
-    friendEl.hidden = true;
-    spareBtn.hidden = false;
-    updateTotals();
+    trayEl.hidden = true;
   }
 
-  function lendSpare(slot) {
-    slot.part = { name: SPARE.name, cents: null, wanted: false, from: SPARE.owner };
-    spareBtn.hidden = true;
-    renderSlot(slot);
-    pop(slot.el);
-    updateTotals();
-    setStatus(`${SPARE.owner}'s SSD is in your ${slot.category} slot. It stays ${SPARE.owner}'s, and either of you can take it out.`);
-  }
+  const slotByID = (id) => slots.find((s) => String(s.id) === String(id));
 
-  function returnSpare(slot) {
-    slot.part = null;
-    spareBtn.hidden = false;
-    renderSlot(slot);
-    updateTotals();
-    setStatus(`Returned the SSD to ${SPARE.owner}.`);
-    spareBtn.focus();
-  }
+  /* ---------- What visitors can do once the list is in ---------- */
 
-  // emptySlotFor picks where a clicked spare goes: an empty slot of its
-  // category, else any empty slot.
-  function emptySlotFor(category) {
-    const empty = slots.filter((s) => !s.part);
-    return empty.find((s) => s.category.toLowerCase() === category.toLowerCase()) || empty[0];
-  }
-
-  spareBtn.addEventListener("click", () => {
-    const slot = emptySlotFor(SPARE.category);
-    if (slot) {
-      lendSpare(slot);
+  // Clicking a part marks it bought or not, or gives a borrowed one back.
+  board.addEventListener("board:slot", (e) => {
+    const slot = slotByID(e.detail.slot);
+    if (running || !slot) {
+      return;
+    }
+    const part = slot.part;
+    if (!part) {
+      setStatus(spareLent ? "That slot is empty." : `That slot is empty. Put ${SPARE.owner}'s spare in it from the tray below.`);
+      return;
+    }
+    if (part.from) {
+      slot.part = null;
+      spareLent = false;
+      setStatus(`Gave the SSD back to ${SPARE.owner}. It's in the tray again.`);
     } else {
-      setStatus("Every slot is full. Remove a slot's part first.");
+      part.wanted = !part.wanted;
+      setStatus(part.wanted ? `${part.name} is back to not bought yet.` : `Marked ${part.name} bought.`);
     }
+    render();
+    board.querySelector(`.slot-card[data-slot="${slot.id}"]`)?.focus({ preventScroll: true });
   });
-  spareBtn.addEventListener("dragstart", (e) => {
-    dragging = true;
-    e.dataTransfer.setData("text/plain", SPARE.name);
-    e.dataTransfer.effectAllowed = "move";
-    root.classList.add("is-dragging");
+
+  // Dropping sam's spare on a slot, or clicking it and then a slot, lends it.
+  board.addEventListener("board:place", (e) => {
+    const slot = slotByID(e.detail.slot);
+    if (running || !slot || spareLent) {
+      return;
+    }
+    if (slot.part) {
+      setStatus("That slot is full. Pick an empty one.");
+      return;
+    }
+    slot.part = { name: SPARE.name, cents: null, wanted: false, from: SPARE.owner };
+    spareLent = true;
+    render(slot.id);
+    setStatus(`${SPARE.owner}'s SSD is in your ${slot.category} slot. It stays ${SPARE.owner}'s, and either of you can take it out.`);
   });
-  spareBtn.addEventListener("dragend", () => {
-    dragging = false;
-    root.classList.remove("is-dragging");
-  });
+
+  /* ---------- The import ---------- */
 
   async function play() {
     running = true;
@@ -278,81 +327,58 @@
     goBtn.textContent = "Importing…";
     const wanted = wantedBox.checked;
     resetBuild();
+    render();
     rowsEl.replaceChildren();
 
     setStatus("Reading the pasted list…");
-    await sleep(500);
+    await sleep(400);
     const rows = [];
     for (const part of SAMPLE) {
       const row = el("li", "demo-row");
-      row.append(
-        el("span", "demo-row-type", part.type),
-        el("span", "demo-row-name", part.name),
-        el("span", "demo-row-price", `$${money(part.cents)}`),
-        el("span", "demo-row-dest"),
-      );
+      const type = el("span", "demo-row-type", part.type);
+      type.style.setProperty("--type", styleOf(slotCategory(part.type)).Color);
+      row.append(type, el("span", "demo-row-name", part.name), el("span", "demo-row-price", `$${money(part.cents)}`), el("span", "demo-row-dest"));
       rowsEl.append(row);
       rows.push(row);
-      await sleep(90);
+      await sleep(70);
     }
 
     setStatus(`Found ${SAMPLE.length} parts. Sorting them into slots…`);
-    await sleep(400);
+    await sleep(300);
     const created = [];
     for (const [i, part] of SAMPLE.entries()) {
       const row = rows[i];
       const category = slotCategory(part.type);
-      let slot = slots.find((s) => !s.part && s.category.toLowerCase() === category.toLowerCase());
+      let slot = slots.find((s) => !s.part && keyOf(s.category) === keyOf(category));
       let dest = category;
       if (!slot) {
-        slot = addSlot(category, true);
+        slot = addSlot(category);
         created.push(category);
         dest = `new ${category} slot`;
       }
       row.classList.add("is-active");
       row.querySelector(".demo-row-dest").textContent = `→ ${dest}`;
-      await sleep(180);
-      await fly(row, slot.el, part.name);
+      await sleep(200);
       slot.part = { name: part.name, cents: part.cents, wanted, from: null };
-      renderSlot(slot);
-      pop(slot.el);
-      updateTotals();
+      render(slot.id);
       row.classList.replace("is-active", "is-done");
-      await sleep(100);
+      await sleep(420);
     }
 
     const extra = created.length ? `, with a new slot for the ${created.join(", ")}` : "";
-    const next = wanted
-      ? "Click “not bought yet” on a part once you've bought it."
-      : "Click “bought” on a part to plan it instead.";
+    const next = wanted ? "Click a part once you've bought it." : "Click a part to plan it instead.";
     setStatus(`Imported ${SAMPLE.length} parts${extra}. ${next}`);
-    friendEl.hidden = false;
-    pop(friendEl);
+    trayEl.hidden = false;
     goBtn.disabled = false;
     goBtn.textContent = "Replay";
     running = false;
   }
 
-  // hideFeatures removes the feature cards below the demo once a visitor
-  // starts it themselves; the demo shows the same things.
-  function hideFeatures() {
-    const features = document.querySelector(".feature-grid");
-    if (!features) {
-      return;
-    }
-    if (reduceMotion) {
-      features.remove();
-      return;
-    }
-    features
-      .animate([{ opacity: 1 }, { opacity: 0, transform: "translateY(8px)" }], { duration: 250, easing: "ease-in" })
-      .finished.catch(() => {})
-      .finally(() => features.remove());
-  }
-
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    hideFeatures();
+    // The demo shows what the feature cards below it say, so they go once a
+    // visitor starts it themselves.
+    document.querySelector(".feature-grid")?.remove();
     if (!running) {
       play();
     }
@@ -370,8 +396,9 @@
 
   root.hidden = false;
   resetBuild();
+  render();
 
-  // Play once when the demo scrolls into view.
+  // Play once when the board scrolls into view.
   if ("IntersectionObserver" in window) {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -382,8 +409,8 @@
           }
         }
       },
-      { threshold: 0.35 },
+      { threshold: 0.3 },
     );
-    observer.observe(root);
+    observer.observe(board);
   }
 })();

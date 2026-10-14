@@ -135,6 +135,18 @@ RETURNING *;
 -- name: ListPartsByOwner :many
 SELECT * FROM parts WHERE owner_id = ? ORDER BY created_at DESC, id DESC;
 
+-- name: ListSpareParts :many
+-- Parts in no slot that the user could put in one of their machines: their
+-- own (bought or not), and bought parts of members who haven't left.
+SELECT parts.id, parts.name, parts.category, parts.status, parts.price_cents,
+       parts.owner_id, users.username AS owner_name
+FROM parts
+JOIN users ON users.id = parts.owner_id
+WHERE parts.slot_id IS NULL AND parts.status <> 'retired'
+  AND users.deleted_at IS NULL
+  AND (parts.owner_id = sqlc.arg(user_id) OR parts.status = 'owned')
+ORDER BY users.username, parts.name, parts.id;
+
 -- name: AssignPartToSlot :execrows
 -- The caller must own the slot's machine. Their own parts can move freely;
 -- another user's part must be owned (bought), not already in a slot, and

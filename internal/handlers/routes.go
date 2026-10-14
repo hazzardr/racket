@@ -41,6 +41,8 @@ func (h *Handler) Routes() http.Handler {
 		r.Post("/machines/{id}/slots", h.CreateSlot)
 		r.Post("/machines/{id}/prices", h.RefreshPrices)
 		r.Post("/slots/{id}/part", h.AddPart)
+		r.Post("/slots/{id}/part/place", h.PlacePart)
+		r.Post("/slots/{id}/part/takeout", h.TakeOutPart)
 		r.Post("/slots/{id}/part/delete", h.RemovePart)
 		r.Post("/slots/{id}/part/bought", h.MarkPartBought)
 		r.Post("/slots/{id}/delete", h.DeleteSlot)

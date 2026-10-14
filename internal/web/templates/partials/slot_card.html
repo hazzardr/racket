@@ -1,53 +1,131 @@
+{{/* The pieces of one slot on the machine board: its card, its bay in the
+     chassis, and its details panel. board.js wires each bay to its card. */}}
+
+{{define "slot_chip" -}}
+{{if eq .State "owned"}}<span class="chip k-owned">installed</span>
+{{- else if eq .State "wanted"}}<span class="chip k-wanted">not bought yet</span>
+{{- else if eq .PartSource "former_member"}}<span class="chip k-borrowed">from a former member</span>
+{{- else if eq .State "borrowed"}}<span class="chip k-borrowed">from {{.PartOwnerName.String}}</span>
+{{- else}}<span class="chip k-empty">empty</span>{{end}}
+{{- end}}
+
+{{define "slot_meta" -}}
+{{if eq .State "empty"}}{{if .CanEdit}}Drop a spare here, or add one{{else}}Nothing in it yet{{end}}
+{{- else if eq .State "borrowed"}}on loan
+{{- else if not .PartPriceCents.Valid}}no price
+{{- else if eq .State "wanted"}}est. ${{money .PartPriceCents.Int64}}
+  {{- if .PriceDelta}} <span class="delta {{if .PriceDown}}down{{else}}up{{end}}" title="Change at the last price check">{{if .PriceDown}}&darr;{{else}}&uarr;{{end}} ${{money .PriceDelta}}</span>{{end}}
+{{- else}}${{money .PartPriceCents.Int64}}{{end}}
+{{- if .PartMissingFromSourceAt.Valid}} · <span class="missing">not on its list</span>{{end}}
+{{- end}}
+
 {{define "slot_card"}}
-<div class="card slot-card slot-{{.PartSource}}" id="slot-{{.ID}}">
-  <div class="slot-header">
-    <h3 class="slot-category">{{.Category}}</h3>
-    {{if .CanEdit}}
-    <form method="post" action="/slots/{{.ID}}/delete" class="inline-form"
-          hx-post="/slots/{{.ID}}/delete" hx-target="#slot-{{.ID}}" hx-swap="delete">
-      <button type="submit" class="btn-remove-slot" title="Remove slot">&times;</button>
-    </form>
-    {{end}}
-  </div>
-  {{if .PartID.Valid}}
-  <div class="slot-part">
-    <span class="part-name">{{.PartName.String}}</span>
-    {{if .PartModel.Valid}}<span class="part-model">{{.PartModel.String}}</span>{{end}}
-    {{if .PartPriceCents.Valid}}<span class="part-price">${{money .PartPriceCents.Int64}}</span>{{end}}
-    {{if eq .PartSource "borrowed"}}<span class="part-badge badge-borrowed">from {{.PartOwnerName.String}}</span>
-    {{- else if eq .PartSource "former_member"}}<span class="part-badge badge-former">from a former member</span>
-    {{- else if eq .PartSource "unpurchased"}}<span class="part-badge badge-unpurchased">not bought yet</span>
-    {{- end}}
-    {{if .PriceDelta}}<span class="part-badge {{if .PriceDown}}badge-price-down{{else}}badge-price-up{{end}}" title="Change at the last price check">{{if .PriceDown}}&darr;{{else}}&uarr;{{end}} ${{money .PriceDelta}}</span>{{end}}
-    {{if .PartMissingFromSourceAt.Valid}}<span class="part-badge badge-missing" title="Checked {{ago .PartMissingFromSourceAt.Time}}">not on its PCPartPicker list anymore</span>{{end}}
-    {{if .CanMarkBought}}
-    <form class="mark-bought" method="post" action="/slots/{{.ID}}/part/bought"
-          hx-post="/slots/{{.ID}}/part/bought" hx-target="#slot-{{.ID}}" hx-swap="outerHTML">
-      <input name="price" type="text" inputmode="decimal" placeholder="Price paid" aria-label="Price paid"
-             value="{{if .PartPriceCents.Valid}}{{money .PartPriceCents.Int64}}{{end}}">
-      <button type="submit" class="btn btn-small">Mark bought</button>
-    </form>
-    {{end}}
-    {{if .RemoveLabel}}
-    <form method="post" action="/slots/{{.ID}}/part/delete" class="inline-form"
-          hx-post="/slots/{{.ID}}/part/delete" hx-target="#slot-{{.ID}}" hx-swap="outerHTML">
-      <button type="submit" class="btn btn-small">{{.RemoveLabel}}</button>
-    </form>
-    {{end}}
-  </div>
-  {{else if .CanEdit}}
-  <form class="slot-form" method="post" action="/slots/{{.ID}}/part"
-        hx-post="/slots/{{.ID}}/part" hx-target="#slot-{{.ID}}" hx-swap="outerHTML">
-    <input name="name" type="text" placeholder="Part name" required>
-    <input name="manufacturer" type="text" placeholder="Manufacturer">
-    <input name="model" type="text" placeholder="Model">
-    <input name="price" type="text" placeholder="Price" inputmode="decimal">
-    <label class="checkbox"><input name="wanted" type="checkbox"> Not bought yet</label>
-    <button type="submit" class="btn btn-small">Add</button>
-  </form>
-  {{else}}
-  <p class="meta">Empty</p>
-  {{end}}
-  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
-</div>
+<button type="button" class="slot-card k-{{.State}}" id="slot-{{.ID}}" data-slot="{{.ID}}" data-cat="{{.Key}}" style="{{.Style}}" aria-haspopup="dialog">
+  <span class="slot-top"><span class="slot-cat">{{.Category}}</span>{{template "slot_chip" .}}</span>
+  <span class="slot-name">{{if .PartID.Valid}}{{.PartName.String}}{{else}}Empty slot{{end}}</span>
+  <span class="slot-meta">{{template "slot_meta" .}}</span>
+</button>
 {{end}}
+
+{{define "slot_bay" -}}
+<div class="bay k-{{.State}}" data-slot="{{.ID}}" style="{{.Style}}" title="{{.Category}}"><i class="led"></i><span>{{.Code}}</span></div>
+{{- end}}
+
+{{define "slot_detail"}}
+<section class="slot-detail k-{{.State}}" data-detail="{{.ID}}" style="{{.Style}}" aria-labelledby="detail-{{.ID}}" hidden>
+  <div>
+    <p class="pn-cat"><i></i>{{.Category}} slot</p>
+    <h3 class="pn-name" id="detail-{{.ID}}" tabindex="-1">{{if .PartID.Valid}}{{.PartName.String}}{{else}}Empty slot{{end}}</h3>
+    {{template "slot_chip" .}}
+  </div>
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+
+  {{if .PartID.Valid}}
+  <dl class="pn-dl">
+    {{if .PartModel.Valid}}<dt>Model</dt><dd>{{.PartModel.String}}</dd>{{end}}
+    <dt>Owner</dt><dd>{{if eq .PartSource "former_member"}}a former member{{else}}{{.PartOwnerName.String}}{{end}}</dd>
+    <dt>{{if eq .State "wanted"}}Estimate{{else}}Price{{end}}</dt>
+    <dd>{{if .PartPriceCents.Valid}}${{money .PartPriceCents.Int64}}{{else}}none{{end}}</dd>
+    {{if .PriceDelta}}<dt>Last check</dt><dd>{{if .PriceDown}}down{{else}}up{{end}} ${{money .PriceDelta}}</dd>{{end}}
+  </dl>
+  {{if .PartMissingFromSourceAt.Valid}}
+  <p class="pn-note">Not on its PCPartPicker list anymore (checked {{ago .PartMissingFromSourceAt.Time}}).</p>
+  {{end}}
+  {{if .CanMarkBought}}
+  <form class="pn-form" method="post" action="/slots/{{.ID}}/part/bought" hx-post="/slots/{{.ID}}/part/bought">
+    <label>Price paid
+      <input name="price" type="text" inputmode="decimal" value="{{if .PartPriceCents.Valid}}{{money .PartPriceCents.Int64}}{{end}}">
+    </label>
+    <div class="row"><button type="submit" class="btn btn-small btn-bought">Mark bought</button></div>
+  </form>
+  {{end}}
+  <div class="row">
+    {{if .TakeOutLabel}}
+    <form method="post" action="/slots/{{.ID}}/part/takeout" class="inline-form" hx-post="/slots/{{.ID}}/part/takeout">
+      <button type="submit" class="btn btn-small btn-secondary">{{.TakeOutLabel}}</button>
+    </form>
+    {{end}}
+    {{if .CanDelete}}
+    <form method="post" action="/slots/{{.ID}}/part/delete" class="inline-form"
+          hx-post="/slots/{{.ID}}/part/delete" hx-confirm="Delete {{.PartName.String}}? This can't be undone.">
+      <button type="submit" class="btn btn-small btn-secondary">Delete part</button>
+    </form>
+    {{end}}
+    {{if .CanTakeBack}}
+    <form method="post" action="/slots/{{.ID}}/part/delete" class="inline-form" hx-post="/slots/{{.ID}}/part/delete">
+      <button type="submit" class="btn btn-small btn-secondary">Take back</button>
+    </form>
+    {{end}}
+  </div>
+  {{if .TakeOutLabel}}<p class="pn-note">Taking a part out puts it back in its owner's spares.</p>{{end}}
+
+  {{else if .CanEdit}}
+  {{if .Fits}}
+  <div class="pn-section">
+    <h4>Spares that fit</h4>
+    {{$slot := .ID}}
+    {{range .Fits}}
+    <form class="fit" method="post" action="/slots/{{$slot}}/part/place" hx-post="/slots/{{$slot}}/part/place">
+      <input type="hidden" name="part_id" value="{{.ID}}">
+      <span>{{.Name}}<small>{{if .Mine}}yours{{else}}{{.OwnerName}}'s, borrow it{{end}}</small></span>
+      <button type="submit" class="btn btn-small btn-secondary">Put in</button>
+    </form>
+    {{end}}
+  </div>
+  {{end}}
+  <div class="pn-section">
+    <h4>Add a part</h4>
+    <form class="pn-form" method="post" action="/slots/{{.ID}}/part" hx-post="/slots/{{.ID}}/part">
+      <input name="name" type="text" placeholder="Part name" aria-label="Part name" required>
+      <input name="manufacturer" type="text" placeholder="Manufacturer" aria-label="Manufacturer">
+      <input name="model" type="text" placeholder="Model" aria-label="Model">
+      <input name="price" type="text" placeholder="Price" aria-label="Price" inputmode="decimal">
+      <label class="checkbox"><input name="wanted" type="checkbox"> Not bought yet</label>
+      <div class="row"><button type="submit" class="btn btn-small">Add part</button></div>
+    </form>
+  </div>
+  {{else}}
+  <p class="pn-note">Nothing in this slot yet.</p>
+  {{end}}
+
+  {{if .CanEdit}}
+  <div class="pn-section">
+    <form method="post" action="/slots/{{.ID}}/delete" class="inline-form" hx-post="/slots/{{.ID}}/delete">
+      <button type="submit" class="btn-danger">Remove slot</button>
+    </form>
+  </div>
+  {{end}}
+</section>
+{{end}}
+
+{{define "spare_part" -}}
+<button type="button" class="spare k-{{.State}}" data-part="{{.ID}}" data-cat="{{.Key}}" style="{{.Style}}" aria-pressed="false">
+  <i class="sp-port"></i>
+  <span class="sp-name">{{.Name}}</span>
+  <span class="sp-meta">{{.Category}} ·
+    {{- if not .Mine}} <b>{{.OwnerName}}'s</b>
+    {{- else if eq .State "wanted"}} not bought{{if .PriceCents.Valid}}, ${{money .PriceCents.Int64}}{{end}}
+    {{- else if .PriceCents.Valid}} ${{money .PriceCents.Int64}}
+    {{- else}} no price{{end}}</span>
+</button>
+{{- end}}

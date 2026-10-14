@@ -1,0 +1,126 @@
+{{/* The machine board: the machine as a chassis of slot bays, each wired to
+     its part card, plus the owner's spare parts. Every slot action returns
+     this whole fragment; board.js redraws the wires after each swap. */}}
+
+{{define "machine_board"}}
+<div id="board-root" class="board-root" hx-target="#board-root" hx-swap="outerHTML"
+     {{- if .Open}} data-open="{{.Open}}"{{end}}{{if .Seated}} data-seated="{{.Seated}}"{{end}}>
+  <div class="board-bar">
+    <dl class="board-stats">
+      <div><dt>Slots filled</dt><dd>{{.Filled}} / {{len .Slots}}</dd></div>
+      <div><dt>Total</dt><dd>${{money .TotalCents}}</dd></div>
+      <div><dt>Still to buy</dt><dd>${{money .ToBuyCents}}</dd></div>
+    </dl>
+    <div class="meter" aria-hidden="true">
+      <span class="k-owned" style="flex-grow:{{index .Counts "owned"}}"></span>
+      <span class="k-borrowed" style="flex-grow:{{index .Counts "borrowed"}}"></span>
+      <span class="k-wanted" style="flex-grow:{{index .Counts "wanted"}}"></span>
+      <span class="k-empty" style="flex-grow:{{index .Counts "empty"}}"></span>
+    </div>
+  </div>
+
+  <div class="board-tools">
+    <div class="seg" role="radiogroup" aria-label="Color wires by" data-color-toggle hidden>
+      <span class="seg-label">Color by</span>
+      <button type="button" role="radio" data-color="type" aria-checked="true">Part type</button>
+      <button type="button" role="radio" data-color="status" aria-checked="false">Status</button>
+    </div>
+    {{if .IsOwner}}
+    <div class="adds">
+      <span class="seg-label">Add slot</span>
+      {{range .Cats}}
+      <form method="post" action="/machines/{{$.Machine.ID}}/slots" class="inline-form" hx-post="/machines/{{$.Machine.ID}}/slots">
+        <input type="hidden" name="category" value="{{.Name}}">
+        <button type="submit" class="add" style="{{.Style}}"><i></i>{{.Name}}</button>
+      </form>
+      {{end}}
+      <form method="post" action="/machines/{{.Machine.ID}}/slots" class="add-custom" hx-post="/machines/{{.Machine.ID}}/slots">
+        <input name="category" type="text" placeholder="Other slot" aria-label="Slot category" required>
+        <button type="submit" class="add">Add</button>
+      </form>
+    </div>
+    {{end}}
+  </div>
+
+  <div class="board-frame">
+    <div class="board" data-board>
+      <svg class="wires" aria-hidden="true"></svg>
+      <div class="col col-left">{{range .Left}}{{template "slot_card" .}}{{end}}</div>
+      <div class="chassis">
+        <div class="ch-head">
+          {{template "kind_icon" .Machine.Kind}}
+          <div>
+            <div class="ch-name">{{.Machine.Name}}</div>
+            <div class="ch-sub">{{if .Machine.FormFactor.Valid}}{{.Machine.FormFactor.String}} · {{end}}{{.Machine.Kind}}</div>
+          </div>
+        </div>
+        <div class="vents"></div>
+        {{if .Slots}}
+        <div class="bays">
+          <div class="bay-col left">{{range .Left}}{{template "slot_bay" .}}{{end}}</div>
+          <div class="bay-col right">{{range .Right}}{{template "slot_bay" .}}{{end}}</div>
+        </div>
+        {{else}}
+        <p class="ch-empty">No slots yet.{{if .IsOwner}} Add one above.{{end}}</p>
+        {{end}}
+        <div class="ch-foot"><span>{{.Filled}} of {{len .Slots}} slots filled</span><span>{{if .IsOwner}}yours{{else}}{{.OwnerName}}'s{{end}}</span></div>
+      </div>
+      <div class="col col-right">{{range .Right}}{{template "slot_card" .}}{{end}}</div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span class="lg">{{template "line_sample" "owned"}}Installed</span>
+    <span class="lg">{{template "line_sample" "borrowed"}}Borrowed</span>
+    <span class="lg">{{template "line_sample" "wanted"}}Not bought yet</span>
+    <span class="lg">{{template "line_sample" "empty"}}Empty slot</span>
+    {{if .Legend}}<span class="lg-sep lg-types"></span>{{end}}
+    {{range .Legend}}<span class="lg lg-types"><i class="lg-sw" style="{{.Style}}"></i>{{.Name}}</span>{{end}}
+  </div>
+
+  {{if .IsOwner}}
+  <section class="tray" aria-labelledby="tray-title">
+    <div class="tray-head">
+      <h3 id="tray-title">Spare parts</h3>
+      <p class="tray-hint" data-tray-hint>Drag a part onto a slot, or click it and then pick a slot.</p>
+    </div>
+    <div class="tray-groups">
+      <div class="tray-group">
+        <h4>Yours, not in a machine</h4>
+        <div class="spares">
+          {{range .Spares}}{{if .Mine}}{{template "spare_part" .}}{{end}}{{end}}
+          {{if not .HasMine}}<p class="none">Nothing spare. Parts you take out of a slot land here.</p>{{end}}
+        </div>
+      </div>
+      <div class="tray-group">
+        <h4>Friends' spares you can borrow</h4>
+        <div class="spares">
+          {{range .Spares}}{{if not .Mine}}{{template "spare_part" .}}{{end}}{{end}}
+          {{if not .HasTheirs}}<p class="none">No friends' spares right now.</p>{{end}}
+        </div>
+      </div>
+    </div>
+  </section>
+  {{end}}
+
+  <aside class="slot-panel" aria-label="Slot details" hidden>
+    <button type="button" class="panel-close" aria-label="Close" data-panel-close>&times;</button>
+    {{range .Slots}}{{template "slot_detail" .}}{{end}}
+  </aside>
+</div>
+{{end}}
+
+{{define "line_sample" -}}
+<svg viewBox="0 0 38 10" aria-hidden="true"><g class="wire k-{{.}}"><path class="base" d="M2 5H36"/>
+{{- if or (eq . "owned") (eq . "borrowed")}}<path class="flow" d="M2 5H36"/>{{end}}</g></svg>
+{{- end}}
+
+{{define "kind_icon" -}}
+<svg class="ch-icon" viewBox="0 0 24 24" aria-hidden="true">
+{{- if eq . "server"}}<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/>
+{{- else if eq . "nas"}}<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h8"/>
+{{- else if eq . "network"}}<rect x="3" y="8" width="18" height="8" rx="1.5"/><path d="M6.5 12h.01M9.5 12h.01M12.5 12h.01M15.5 12h.01"/>
+{{- else if eq . "laptop"}}<rect x="5" y="5" width="14" height="10" rx="1.5"/><path d="M3 19h18"/>
+{{- else}}<rect x="6" y="2.5" width="12" height="19" rx="2"/><path d="M9 6.5h6M9 9.5h6"/><circle cx="12" cy="17" r="1.6"/>
+{{- end}}</svg>
+{{- end}}

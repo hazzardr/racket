@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"slices"
 	"strings"
-	"time"
 
 	"racket/internal/db"
 )
@@ -73,29 +72,10 @@ type newMachinePage struct {
 	Statuses    []string
 }
 
-// MachinePage is the machine detail page data.
-type MachinePage struct {
-	Machine   db.Machine
-	OwnerName string
-	IsOwner   bool
-	Slots     []slotCard
-	Cats      []string
-	// Filled counts the slots with a part. TotalCents sums the priced
-	// parts; ToBuyCents is the part of it not bought yet.
-	Filled     int
-	TotalCents int64
-	ToBuyCents int64
-	// PriceLists are the PCPartPicker lists the viewer's not-yet-bought
-	// parts came from, when the viewer owns the machine. Pasting one again
-	// updates those parts' prices. PricesCheckedAt is the latest paste
-	// (zero if no part had a price).
-	PriceLists      []string
-	PricesCheckedAt time.Time
-}
-
 // landingPage is the landing page data: the slots a new machine starts with
 // and the PCPartPicker type mapping, so the import demo sorts its sample
-// list the way a real import does.
+// list the way a real import does, and the board's category styles, so its
+// board looks like a machine page.
 type landingPage struct {
 	Demo importDemo
 }
@@ -104,13 +84,29 @@ type importDemo struct {
 	Slots     []string
 	SlotMap   map[string]string
 	OtherSlot string
+	// Styles is keyed by categoryKey.
+	Styles map[string]demoStyle
+}
+
+// demoStyle is a categoryStyle the demo can read.
+type demoStyle struct {
+	Code  string
+	Color string
 }
 
 func (h *Handler) Landing(w http.ResponseWriter, r *http.Request) {
+	styles := make(map[string]demoStyle, len(categoryStyles)+1)
+	for key := range categoryStyles {
+		s := styleOf(key)
+		styles[key] = demoStyle{Code: s.code, Color: s.color}
+	}
+	other := styleOf(otherSlot)
+	styles[categoryKey(otherSlot)] = demoStyle{Code: other.code, Color: other.color}
 	h.render(w, r, http.StatusOK, "landing.html", landingPage{Demo: importDemo{
 		Slots:     defaultSlots,
 		SlotMap:   pcppSlotCategories,
 		OtherSlot: otherSlot,
+		Styles:    styles,
 	}})
 }
 
@@ -184,38 +180,10 @@ func (h *Handler) MachineDetailPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := h.queries.ListSlotsByMachine(r.Context(), id)
+	page, err := h.machineBoard(r.Context(), machine, viewer(r).ID)
 	if err != nil {
 		h.serverError(w, r, err)
 		return
-	}
-	v := viewer(r)
-	page := MachinePage{
-		Machine:   machine.Machine,
-		OwnerName: machine.OwnerName,
-		IsOwner:   machine.Machine.OwnerID == v.ID,
-		Slots:     make([]slotCard, len(rows)),
-		Cats:      commonSlots,
-	}
-	for i, row := range rows {
-		page.Slots[i] = newSlotCard(row, v.ID, machine.Machine.OwnerID)
-		if !row.PartID.Valid {
-			continue
-		}
-		page.Filled++
-		page.TotalCents += row.PartPriceCents.Int64
-		if row.PartStatus.String != partWanted {
-			continue
-		}
-		page.ToBuyCents += row.PartPriceCents.Int64
-		if page.IsOwner && row.PartOwnerID.Int64 == v.ID && row.PartSourceUrl.Valid {
-			if !slices.Contains(page.PriceLists, row.PartSourceUrl.String) {
-				page.PriceLists = append(page.PriceLists, row.PartSourceUrl.String)
-			}
-			if row.PartPriceCheckedAt.Valid && row.PartPriceCheckedAt.Time.After(page.PricesCheckedAt) {
-				page.PricesCheckedAt = row.PartPriceCheckedAt.Time
-			}
-		}
 	}
 	h.render(w, r, http.StatusOK, "machine_detail.html", page)
 }

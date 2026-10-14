@@ -3,9 +3,11 @@ package handlers
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -147,7 +149,8 @@ func TestAddPart(t *testing.T) {
 		"price":        {"$149.99"},
 	})
 	assertStatus(t, rr, http.StatusOK)
-	assertContains(t, rr, "B550 Tomahawk", "$149.99", "slot-own", ">Remove<")
+	assertContains(t, rr, "B550 Tomahawk", "$149.99", `class="slot-card k-owned"`, ">Take out<", ">Delete part<",
+		fmt.Sprintf(`data-seated="%d"`, slotID))
 	assertNotContains(t, rr, "not bought yet")
 
 	slot := app.slots(machineID)[0]
@@ -167,7 +170,7 @@ func TestAddUnboughtPart(t *testing.T) {
 
 	rr := app.postHX(alice, slotPath(slotID, "/part"), url.Values{"name": {"9800X3D"}, "wanted": {"on"}})
 	assertStatus(t, rr, http.StatusOK)
-	assertContains(t, rr, "slot-unpurchased", "not bought yet")
+	assertContains(t, rr, `class="slot-card k-wanted"`, "not bought yet")
 	if p, _ := app.part(app.slots(machineID)[0].PartID.Int64); p.Status != "wanted" {
 		t.Errorf("status = %q, want wanted", p.Status)
 	}
@@ -207,16 +210,21 @@ func TestBorrowedParts(t *testing.T) {
 	tests := []struct {
 		name       string
 		actor      string
+		action     string
 		wantStatus int
 		wantBody   string
 		returned   bool
 	}{
 		{
-			name: "borrower returns it", actor: "alice",
+			name: "borrower gives it back", actor: "alice", action: "/part/takeout",
 			wantStatus: http.StatusOK, wantBody: `placeholder="Part name"`, returned: true,
 		},
-		{name: "lender takes it back", actor: "bob", wantStatus: http.StatusOK, wantBody: "Empty", returned: true},
-		{name: "outsider can't touch it", actor: "carol", wantStatus: http.StatusForbidden},
+		{
+			name: "lender takes it back", actor: "bob", action: "/part/delete",
+			wantStatus: http.StatusOK, wantBody: "Empty slot", returned: true,
+		},
+		{name: "outsider can't take it", actor: "carol", action: "/part/delete", wantStatus: http.StatusForbidden},
+		{name: "outsider can't take it out", actor: "carol", action: "/part/takeout", wantStatus: http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -230,11 +238,12 @@ func TestBorrowedParts(t *testing.T) {
 			app.borrow(app.user("alice"), gpu, gpuSlot.ID)
 
 			page := app.get(cookies["alice"], machinePath(machineID, ""))
-			assertContains(t, page, "slot-borrowed", "from bob", ">Return<")
+			assertContains(t, page, `class="slot-card k-borrowed"`, "from bob", ">Give back to bob<")
+			assertNotContains(t, page, ">Delete part<")
 			page = app.get(cookies["bob"], machinePath(machineID, ""))
 			assertContains(t, page, ">Take back<")
 
-			rr := app.postHX(cookies[tt.actor], slotPath(gpuSlot.ID, "/part/delete"), nil)
+			rr := app.postHX(cookies[tt.actor], slotPath(gpuSlot.ID, tt.action), nil)
 			assertStatus(t, rr, tt.wantStatus)
 			if tt.wantBody != "" {
 				assertContains(t, rr, tt.wantBody)
@@ -265,7 +274,7 @@ func TestFormerMemberPartLabel(t *testing.T) {
 	}
 
 	rr := app.get(alice, machinePath(machineID, ""))
-	assertContains(t, rr, "slot-former_member", "from a former member", "RTX 3080")
+	assertContains(t, rr, `class="slot-card k-borrowed"`, "from a former member", "RTX 3080")
 	assertNotContains(t, rr, "from bob")
 }
 
@@ -347,7 +356,8 @@ func TestFriendsCanViewButNotChange(t *testing.T) {
 	page := app.get(bob, machinePath(machineID, ""))
 	assertStatus(t, page, http.StatusOK)
 	assertContains(t, page, "B550", "alice's desktop")
-	assertNotContains(t, page, "Delete machine", "Add slot", `placeholder="Part name"`, "Remove slot", ">Remove<")
+	assertNotContains(t, page, "Delete machine", "Add slot", `placeholder="Part name"`, "Remove slot",
+		">Take out<", ">Delete part<", "Spare parts")
 
 	for _, attempt := range []struct {
 		path string
@@ -358,6 +368,8 @@ func TestFriendsCanViewButNotChange(t *testing.T) {
 		{slotPath(slots[1].ID, "/part"), url.Values{"name": {"sneaky"}}},
 		{slotPath(slots[1].ID, "/delete"), nil},
 		{slotPath(slots[0].ID, "/part/delete"), nil},
+		{slotPath(slots[0].ID, "/part/takeout"), nil},
+		{slotPath(slots[1].ID, "/part/place"), url.Values{"part_id": {"1"}}},
 	} {
 		rr := app.postHX(bob, attempt.path, attempt.form)
 		if rr.Code != http.StatusForbidden {
@@ -401,4 +413,61 @@ func TestServerErrorHidesDetails(t *testing.T) {
 		t.Fatalf("error page leaked internal error text: %s", body)
 	}
 	assertContains(t, rr, "Something went wrong")
+}
+
+func TestTakeOutPartKeepsIt(t *testing.T) {
+	app := newTestApp(t)
+	alice := app.login("alice")
+	machineID := app.createMachine(alice, "test")
+	slotID := app.slots(machineID)[0].ID
+	assertStatus(t, app.postHX(alice, slotPath(slotID, "/part"), url.Values{"name": {"Part A"}}), http.StatusOK)
+	partID := app.slots(machineID)[0].PartID.Int64
+
+	rr := app.postHX(alice, slotPath(slotID, "/part/takeout"), nil)
+	assertStatus(t, rr, http.StatusOK)
+	// The part waits in the tray, and fits the slot it came out of.
+	assertContains(t, rr, "Spare parts", fmt.Sprintf(`data-part="%d"`, partID), "Spares that fit")
+	p, ok := app.part(partID)
+	if !ok || p.SlotID.Valid {
+		t.Fatalf("part = %+v (exists %v), want it in Alice's spares", p, ok)
+	}
+}
+
+func TestPlacePart(t *testing.T) {
+	app := newTestApp(t)
+	alice := app.login("alice")
+	app.login("bob")
+	machineID := app.createMachine(alice, "alice-pc")
+	gpuSlot := app.slots(machineID)[6]
+	mine := app.sparePart(app.user("alice"), "RX 6600")
+	bobs := app.sparePart(app.user("bob"), "RTX 3080")
+
+	// Alice sees both spares in her tray.
+	page := app.get(alice, machinePath(machineID, ""))
+	assertContains(t, page, "RX 6600", "RTX 3080", "<b>bob's</b>")
+
+	// She puts her own in, then swaps in Bob's: hers goes back to her spares.
+	path := slotPath(gpuSlot.ID, "/part/place")
+	rr := app.postHX(alice, path, url.Values{"part_id": {strconv.FormatInt(mine.ID, 10)}})
+	assertStatus(t, rr, http.StatusOK)
+	assertContains(t, rr, fmt.Sprintf(`data-seated="%d"`, gpuSlot.ID))
+	assertStatus(t, app.postHX(alice, path, url.Values{"part_id": {strconv.FormatInt(bobs.ID, 10)}}), http.StatusOK)
+	if slot := app.slots(machineID)[6]; slot.PartID.Int64 != bobs.ID || slot.PartSource != "borrowed" {
+		t.Fatalf("GPU slot = %+v, want Bob's part, borrowed", slot)
+	}
+	if p, _ := app.part(mine.ID); p.SlotID.Valid {
+		t.Errorf("Alice's RX 6600 is still in slot %v, want it back in her spares", p.SlotID)
+	}
+
+	// Bob's part is in use now, so a second machine can't take it too.
+	other := app.createMachine(alice, "alice-nas")
+	bobsID := url.Values{"part_id": {strconv.FormatInt(bobs.ID, 10)}}
+	rr = app.postHX(alice, slotPath(app.slots(other)[6].ID, "/part/place"), bobsID)
+	assertStatus(t, rr, http.StatusOK)
+	assertContains(t, rr, "That part can&#39;t go in this slot.")
+	if p, _ := app.part(bobs.ID); p.SlotID.Int64 != gpuSlot.ID {
+		t.Errorf("Bob's part moved to slot %v, want it to stay in %d", p.SlotID, gpuSlot.ID)
+	}
+
+	assertStatus(t, app.postHX(alice, path, url.Values{"part_id": {"x"}}), http.StatusBadRequest)
 }

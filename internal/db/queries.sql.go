@@ -678,6 +678,60 @@ func (q *Queries) ListSlotsByMachine(ctx context.Context, machineID int64) ([]Li
 	return items, nil
 }
 
+const listSpareParts = `-- name: ListSpareParts :many
+SELECT parts.id, parts.name, parts.category, parts.status, parts.price_cents,
+       parts.owner_id, users.username AS owner_name
+FROM parts
+JOIN users ON users.id = parts.owner_id
+WHERE parts.slot_id IS NULL AND parts.status <> 'retired'
+  AND users.deleted_at IS NULL
+  AND (parts.owner_id = ?1 OR parts.status = 'owned')
+ORDER BY users.username, parts.name, parts.id
+`
+
+type ListSparePartsRow struct {
+	ID         int64
+	Name       string
+	Category   sql.NullString
+	Status     string
+	PriceCents sql.NullInt64
+	OwnerID    int64
+	OwnerName  string
+}
+
+// Parts in no slot that the user could put in one of their machines: their
+// own (bought or not), and bought parts of members who haven't left.
+func (q *Queries) ListSpareParts(ctx context.Context, userID int64) ([]ListSparePartsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSpareParts, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSparePartsRow
+	for rows.Next() {
+		var i ListSparePartsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Category,
+			&i.Status,
+			&i.PriceCents,
+			&i.OwnerID,
+			&i.OwnerName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markPartBought = `-- name: MarkPartBought :execrows
 UPDATE parts SET
     status = 'owned',

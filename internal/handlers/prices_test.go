@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -125,7 +126,7 @@ func TestUpdatePrices(t *testing.T) {
 	page := app.get(alice, machinePath(machineID, ""))
 	assertStatus(t, page, http.StatusOK)
 	assertContains(t, page, "Update prices", "checked today", `href="`+plannedListURL+`"`,
-		"&darr; $30.00", "not on its PCPartPicker list anymore")
+		"&darr; $30.00", "Not on its PCPartPicker list anymore")
 
 	// An update with no change clears the last change, and a part back on
 	// its list is no longer missing.
@@ -223,11 +224,12 @@ func TestMarkPartBought(t *testing.T) {
 
 	assertStatus(t, app.post(bob, slotPath(cpuSlot, "/part/bought"), nil), http.StatusForbidden)
 
-	// No price paid given: the last known price stays. htmx gets the card.
+	// No price paid given: the last known price stays. htmx gets the board,
+	// with the CPU's card installed and its wire to draw in.
 	rr := app.postHX(alice, slotPath(cpuSlot, "/part/bought"), url.Values{"price": {""}})
 	assertStatus(t, rr, http.StatusOK)
-	assertContains(t, rr, `id="slot-`)
-	assertNotContains(t, rr, "Mark bought", "not bought yet")
+	assertContains(t, rr, fmt.Sprintf(`class="slot-card k-owned" id="slot-%d"`, cpuSlot),
+		fmt.Sprintf(`data-seated="%d"`, cpuSlot))
 	cpu := app.partsNamed("alice", "Ryzen 7 9800X3D")[0]
 	if cpu.Status != partOwned || cpu.PriceCents.Int64 != 44900 {
 		t.Errorf("CPU = %s at %v, want owned at 44900", cpu.Status, cpu.PriceCents)

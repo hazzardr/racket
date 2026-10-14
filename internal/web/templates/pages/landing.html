@@ -1,17 +1,21 @@
 {{template "page_top" .}}
-<section class="hero">
-  <h2 class="hero-title">What is Racket?</h2>
-  <p class="lead">
-    Racket (Rack-it) is a notebook for your hardware. Make an entry for each machine:
-      server, desktop, NAS, whatever's humming in the corner. Then log
-      the parts inside, so you never have to remember which stick of RAM
-      is in which box.
-  </p>
-  <p class="cta">
-    {{if .User}}<a href="/machines" class="btn">Your machines</a>{{else}}<a href="/login" class="btn">Log in</a>{{end}}
-  </p>
+<section class="landing">
+  <div class="hero">
+    <h2 class="hero-title">What is Racket?</h2>
+    <p class="lead">
+      Racket (Rack-it) is a notebook for your hardware. Make an entry for each machine:
+        server, desktop, NAS, whatever's humming in the corner. Then log
+        the parts inside, so you never have to remember which stick of RAM
+        is in which box.
+    </p>
+    <p class="cta">
+      {{if .User}}<a href="/machines" class="btn">Your machines</a>{{else}}<a href="/login" class="btn">Log in</a>{{end}}
+      {{if .User}}<a href="/import" class="btn btn-secondary">Import from PCPartPicker</a>{{end}}
+    </p>
+  </div>
 
-  {{/* The demo needs JavaScript; demo.js unhides it. */}}
+  {{/* The demo needs JavaScript; demo.js unhides it. Its board is the
+       machine page's (board.js draws the wires), with no server behind it. */}}
   <section class="demo" id="demo" aria-labelledby="demo-title" hidden>
     <div class="demo-intro">
       <h2 class="demo-title" id="demo-title">See it work</h2>
@@ -20,68 +24,112 @@
         slot of your build. This one is a sample, so nothing is saved.
       </p>
     </div>
-    <div class="demo-stage">
-      <div class="card demo-source">
-        <form class="demo-import">
-          <div class="demo-url">
-            <span>Pasted from PCPartPicker (Markup, then Text)</span>
-            <pre class="demo-paste" tabindex="0"></pre>
-          </div>
-          <div class="demo-import-row">
-            <label class="checkbox">
-              <input type="checkbox" class="demo-wanted" checked>
-              Not bought yet (a planned build)
-            </label>
-            <button type="submit" class="btn btn-small demo-go">Import</button>
-          </div>
-        </form>
+
+    <div class="demo-import">
+      <form class="demo-form">
+        <div class="demo-url">
+          <span class="demo-label">Pasted from PCPartPicker (Markup, then Text)</span>
+          <pre class="demo-paste" tabindex="0"></pre>
+        </div>
+        <div class="demo-import-row">
+          <label class="checkbox">
+            <input type="checkbox" class="demo-wanted" checked>
+            Not bought yet (a planned build)
+          </label>
+          <button type="submit" class="btn btn-small demo-go">Import</button>
+        </div>
+      </form>
+      <div class="demo-parsed">
+        <span class="demo-label">Parts found</span>
         <ol class="demo-rows"></ol>
-        <p class="demo-status" role="status">Press Import to fetch the list.</p>
+        <p class="demo-status" role="status">Press Import to read the list.</p>
       </div>
-      <div class="card demo-build">
-        <div class="demo-build-head">
-          <h3>Living room PC</h3>
-          <span class="badge">planned</span>
-        </div>
-        <div class="demo-slots"></div>
-        <div class="demo-totals">
-          <div class="demo-meter" aria-hidden="true"><span></span></div>
-          <dl>
-            <div><dt>Slots filled</dt><dd class="demo-filled">0 / 0</dd></div>
-            <div><dt>Total</dt><dd>$<span class="demo-total">0.00</span></dd></div>
-            <div><dt>Still to buy</dt><dd>$<span class="demo-tobuy">0.00</span></dd></div>
-          </dl>
-        </div>
-        <div class="demo-friend" hidden>
-          <p>Your friend <strong>sam</strong> has a spare. Drag it into an empty slot, or click it.</p>
-          <button type="button" class="demo-spare" draggable="true">
-            <span class="part-name">Crucial P3 Plus 2 TB NVMe</span>
-            <span class="part-badge badge-borrowed">sam's</span>
-          </button>
+    </div>
+
+    <div class="board-root demo-board" data-demo>
+      <div class="board-bar">
+        <dl class="board-stats">
+          <div><dt>Slots filled</dt><dd class="demo-filled">0 / 0</dd></div>
+          <div><dt>Total</dt><dd>$<span class="demo-total">0.00</span></dd></div>
+          <div><dt>Still to buy</dt><dd>$<span class="demo-tobuy">0.00</span></dd></div>
+        </dl>
+        <div class="meter demo-meter" aria-hidden="true">
+          <span class="k-owned"></span><span class="k-borrowed"></span><span class="k-wanted"></span><span class="k-empty"></span>
         </div>
       </div>
+
+      <div class="board-tools">
+        <div class="seg" role="radiogroup" aria-label="Color wires by" data-color-toggle hidden>
+          <span class="seg-label">Color by</span>
+          <button type="button" role="radio" data-color="type" aria-checked="true">Part type</button>
+          <button type="button" role="radio" data-color="status" aria-checked="false">Status</button>
+        </div>
+      </div>
+
+      <div class="board-frame">
+        <div class="board" data-board>
+          <svg class="wires" aria-hidden="true"></svg>
+          <div class="col col-left"></div>
+          <div class="chassis">
+            <div class="ch-head">
+              {{template "kind_icon" "desktop"}}
+              <div>
+                <div class="ch-name">Living room PC</div>
+                <div class="ch-sub">sample · desktop</div>
+              </div>
+            </div>
+            <div class="vents"></div>
+            <div class="bays">
+              <div class="bay-col left"></div>
+              <div class="bay-col right"></div>
+            </div>
+            <div class="ch-foot"><span class="demo-foot"></span><span>planned</span></div>
+          </div>
+          <div class="col col-right"></div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span class="lg">{{template "line_sample" "owned"}}Installed</span>
+        <span class="lg">{{template "line_sample" "borrowed"}}Borrowed</span>
+        <span class="lg">{{template "line_sample" "wanted"}}Not bought yet</span>
+        <span class="lg">{{template "line_sample" "empty"}}Empty slot</span>
+        <span class="lg-sep lg-types"></span>
+        <span class="demo-types"></span>
+      </div>
+
+      <section class="tray demo-tray" aria-labelledby="demo-tray-title" hidden>
+        <div class="tray-head">
+          <h3 id="demo-tray-title">Spare parts</h3>
+          <p class="tray-hint" data-tray-hint>Drag sam's spare onto a slot, or click it and then pick a slot.</p>
+        </div>
+        <div class="tray-group">
+          <h4>Friends' spares you can borrow</h4>
+          <div class="spares demo-spares"></div>
+        </div>
+      </section>
     </div>
     {{with .Data}}<script type="application/json" id="demo-config">{{.Demo}}</script>{{end}}
     <script src="/static/demo.js" defer></script>
   </section>
 
   <div class="feature-grid">
-    <div class="feature-card">
-      <h3>Machines</h3>
+    <div class="feature-card" style="--type:#a78bfa">
+      <h3><i></i>Machines</h3>
       <p>
         One entry per box: build date, purchase date, and where it lives
           (the closet counts).
       </p>
     </div>
-    <div class="feature-card">
-      <h3>Parts</h3>
+    <div class="feature-card" style="--type:#34d399">
+      <h3><i></i>Parts</h3>
       <p>
         Model, serial number, warranty, purchase info, and a guide URL —
           the stuff you always need exactly once, at 11pm.
       </p>
     </div>
-    <div class="feature-card">
-      <h3>Easily self-hostable</h3>
+    <div class="feature-card" style="--type:#7aa7ff">
+      <h3><i></i>Easily self-hostable</h3>
       <p>
         One Go binary and a SQLite file — download it, run it, done.
           No database server or other moving pieces to set up.
@@ -89,5 +137,4 @@
     </div>
   </div>
 </section>
-{{if .User}}<p class="discreet"><a href="/import">Import from PCPartPicker</a></p>{{end}}
 {{template "page_bottom" .}}
