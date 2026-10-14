@@ -16,6 +16,13 @@
 {{/* The parts page body. Every parts action returns this whole fragment. */}}
 {{define "parts_board"}}
 <div id="parts-root" class="parts-root" hx-target="#parts-root" hx-swap="outerHTML">
+  <nav class="seg parts-tabs" aria-label="Whose parts">
+    <a href="/parts" hx-get="/parts" hx-select="#parts-root" hx-push-url="true"
+       {{- if eq .View "mine"}} aria-current="page"{{end}}>Yours</a>
+    <a href="/parts?view=friends" hx-get="/parts?view=friends" hx-select="#parts-root" hx-push-url="true"
+       {{- if eq .View "friends"}} aria-current="page"{{end}}>Friends'</a>
+  </nav>
+  {{if eq .View "friends"}}{{template "friend_spares" .Friends}}{{else}}
   <dl class="board-stats">
     <div><dt>Spares</dt><dd>{{len .Spares}}</dd></div>
     <div><dt>Lending</dt><dd>{{.Lending}}</dd></div>
@@ -148,7 +155,73 @@
       </div>
     </div>
   </div>
+  {{end}}
 </div>
+{{end}}
+
+{{/* The friends' tab: the spares friends lend, by category, each with the
+     slots in the viewer's machines it could go in. */}}
+{{define "friend_spares"}}
+<dl class="board-stats">
+  <div><dt>Friends' spares</dt><dd>{{.Total}}</dd></div>
+  <div><dt>Match your plans</dt><dd>{{.Matching}}</dd></div>
+</dl>
+{{with .Borrowed}}
+<p class="status-note" role="status">{{.PartName}} is in your <a href="/machines/{{.MachineID}}">{{.MachineName}}</a> now{{if .Instead}}, instead of buying one{{end}}.</p>
+{{end}}
+{{if .Error}}<p class="status error" role="alert">{{.Error}}</p>{{end}}
+
+{{if .Filters}}
+<div class="adds cat-filters" role="group" aria-label="Show category">
+  <a class="add" href="/parts?view=friends" hx-get="/parts?view=friends" hx-select="#parts-root" hx-push-url="true"
+     {{- if not .Filter}} aria-current="true"{{end}}>All <span>{{.Total}}</span></a>
+  {{range .Filters}}
+  <a class="add" style="{{.Style}}" href="/parts?view=friends&amp;cat={{.Key}}" hx-get="/parts?view=friends&amp;cat={{.Key}}"
+     hx-select="#parts-root" hx-push-url="true"{{if .Selected}} aria-current="true"{{end}}><i></i>{{.Name}} <span>{{.Count}}</span></a>
+  {{end}}
+</div>
+{{end}}
+
+{{$filter := .Filter}}
+{{range .Groups}}
+<h3 class="group-label">{{.Category}}</h3>
+<ul class="part-grid">
+  {{range .Spares}}
+  <li class="mcard pcard k-borrowed" style="{{.Style}}">
+    <div class="pcard-head">
+      <i class="pcard-led"></i><span class="slot-cat">{{.Category}}</span>
+      {{if .Matches}}<span class="chip k-owned">matches your plan</span>{{end}}
+    </div>
+    <h4 class="mcard-name">{{.Name}}</h4>
+    <p class="mcard-sub"><a href="/users/{{.OwnerID}}">{{.OwnerName}}</a>'s
+      {{- if .PriceCents.Valid}} · ${{money .PriceCents.Int64}}{{end}}
+      {{- if .Manufacturer.Valid}} · {{.Manufacturer.String}}{{end}}
+      {{- if .Model.Valid}} · {{.Model.String}}{{end}}</p>
+    <p class="pcard-links">{{template "pcpp_find" .Name}}</p>
+    {{if .Matches}}
+    <p class="pcard-want">Matches your {{range $i, $m := .Matches}}{{if $i}}, {{end}}<a href="/machines/{{$m.MachineID}}">{{$m.MachineName}}</a> {{$m.Category}}{{end}}</p>
+    {{end}}
+    {{if .Targets}}
+    <form class="pcard-borrow" method="post" action="/parts/{{.ID}}/borrow" hx-post="/parts/{{.ID}}/borrow">
+      <input type="hidden" name="cat" value="{{$filter}}">
+      <select name="slot_id" aria-label="Slot to put {{.Name}} in">
+        {{range .Targets}}<option value="{{.SlotID}}">{{.MachineName}} · {{.Category}}{{if .Instead}}, instead of buying{{else}} (empty){{end}}</option>{{end}}
+      </select>
+      <button type="submit" class="btn btn-small btn-secondary">Borrow</button>
+    </form>
+    {{else}}
+    <p class="pcard-want">No empty {{.Category}} slot in <a href="/machines">your machines</a>.</p>
+    {{end}}
+  </li>
+  {{end}}
+</ul>
+{{else}}
+<div class="machine-empty">
+  <span class="slot-cat">Empty shelf</span>
+  <span class="slot-name">Nothing to borrow</span>
+  <span class="slot-meta">{{if .Filter}}No friend lends one of these right now.{{else}}Spares friends lend show up here.{{end}}</span>
+</div>
+{{end}}
 {{end}}
 
 {{/* One of the viewer's spares, as a small card like a machine's. */}}

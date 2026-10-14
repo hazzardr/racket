@@ -266,6 +266,28 @@ SELECT * FROM parts
 WHERE owner_id = ? AND status = 'owned' AND lendable AND slot_id IS NULL
 ORDER BY lower(coalesce(category, '')), lower(name), id;
 
+-- name: ListFriendSpares :many
+-- The spares other members who haven't left lend, for the parts page's
+-- friends' view.
+SELECT sqlc.embed(parts), users.username AS owner_name
+FROM parts
+JOIN users ON users.id = parts.owner_id
+WHERE parts.owner_id <> sqlc.arg(user_id) AND users.deleted_at IS NULL
+  AND parts.status = 'owned' AND parts.lendable AND parts.slot_id IS NULL
+ORDER BY lower(coalesce(parts.category, '')), lower(parts.name), lower(users.username), parts.id;
+
+-- name: ListBorrowTargets :many
+-- The slots in the user's machines a borrowed part could go in: empty
+-- ones, and ones holding the user's own part not bought yet (wanted_name).
+SELECT s.id AS slot_id, s.category, m.id AS machine_id, m.name AS machine_name,
+       p.name AS wanted_name
+FROM machine_slots s
+JOIN machines m ON m.id = s.machine_id
+LEFT JOIN parts p ON p.slot_id = s.id
+WHERE m.owner_id = sqlc.arg(user_id)
+  AND (p.id IS NULL OR (p.status = 'wanted' AND p.owner_id = m.owner_id))
+ORDER BY lower(m.name), m.id, s.position, s.id;
+
 -- name: ListLentParts :many
 -- The user's parts in other users' machines, including machines of members
 -- who have left (the lender can still take those parts back).
