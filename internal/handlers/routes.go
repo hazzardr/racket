@@ -48,6 +48,7 @@ func (h *Handler) Routes() http.Handler {
 		r.Post("/slots/{id}/delete", h.DeleteSlot)
 		r.Get("/parts", h.PartsPage)
 		r.Post("/parts", h.CreateSparePart)
+		r.Post("/parts/import", h.ImportSpares)
 		r.Post("/parts/{id}/lend", h.SetPartLendable)
 		r.Post("/parts/{id}/return", h.ReturnPart)
 		r.Post("/parts/{id}/delete", h.DeleteSparePart)

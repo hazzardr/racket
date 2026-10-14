@@ -55,7 +55,7 @@ func TestAddSparePartValidation(t *testing.T) {
 
 	rr := app.post(alice, partsPath, url.Values{"name": {""}, "model": {"5700X"}})
 	assertStatus(t, rr, http.StatusUnprocessableEntity)
-	assertContains(t, rr, "Part name is required.", `value="5700X"`, "<details class=\"panel add-spare\" open>")
+	assertContains(t, rr, "Part name is required.", `value="5700X"`)
 
 	rr = app.postHX(alice, partsPath, url.Values{"name": {"x"}, "price": {"cheap"}})
 	assertStatus(t, rr, http.StatusOK)
@@ -173,4 +173,48 @@ func TestSpareDemand(t *testing.T) {
 	if n := countOf(rr, "want this"); n != 1 {
 		t.Errorf(`"want this" shown %d times, want once (only the CPU is wanted)`, n)
 	}
+}
+
+func TestImportSpares(t *testing.T) {
+	app := newTestApp(t)
+	alice := app.login("alice")
+
+	rr := app.post(alice, partsPath+"/import", url.Values{"pcpartpicker_text": {samplePaste}, "lend": {"on"}})
+	assertStatus(t, rr, http.StatusSeeOther)
+	if loc := rr.Header().Get("Location"); loc != partsPath {
+		t.Fatalf("redirected to %q, want %s", loc, partsPath)
+	}
+	spares, err := app.queries.ListSparesByOwner(t.Context(), app.user("alice").ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spares) != 11 {
+		t.Fatalf("got %d spares, want the list's 11 parts", len(spares))
+	}
+	for _, p := range spares {
+		if p.Status != partOwned || !p.Lendable || p.SourceUrl.String != "https://pcpartpicker.com/list/Kd3LPf" {
+			t.Errorf("spare %q = %s, lendable %v, from %q; want bought, lendable, from the list",
+				p.Name, p.Status, p.Lendable, p.SourceUrl.String)
+		}
+	}
+	if machines, _ := app.queries.ListMachines(t.Context()); len(machines) != 0 {
+		t.Errorf("importing spares made %d machines", len(machines))
+	}
+
+	// A planned list's parts aren't bought, so they can't be lent.
+	rr = app.postHX(alice, partsPath+"/import", url.Values{
+		"pcpartpicker_text": {"CPU: AMD Ryzen 5 7600  ($199.00 @ Amazon)"}, "lend": {"on"}, "wanted": {"on"},
+	})
+	assertStatus(t, rr, http.StatusOK)
+	assertContains(t, rr, "AMD Ryzen 5 7600", "not bought")
+	for _, p := range app.ownedParts("alice") {
+		if p.Name == "AMD Ryzen 5 7600" && (p.Status != partWanted || p.Lendable) {
+			t.Errorf("planned CPU = %s, lendable %v; want not bought, not lendable", p.Status, p.Lendable)
+		}
+	}
+
+	// Text that isn't a list stays in the box with a hint.
+	rr = app.post(alice, partsPath+"/import", url.Values{"pcpartpicker_text": {"hello there"}})
+	assertStatus(t, rr, http.StatusUnprocessableEntity)
+	assertContains(t, rr, "couldn&#39;t find any parts", ">hello there</textarea>")
 }

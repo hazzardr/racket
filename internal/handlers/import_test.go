@@ -242,8 +242,8 @@ func TestImportCSV_NoMachine(t *testing.T) {
 	csvData := "Type,Item,Price,Merchant\nCPU,Ryzen 7 5800X,$329.99,Amazon\n"
 	rr := app.postImport(alice, nil, []byte(csvData))
 	assertStatus(t, rr, http.StatusSeeOther)
-	if loc := rr.Header().Get("Location"); loc != "/machines" {
-		t.Fatalf("expected redirect to /machines, got %q", loc)
+	if loc := rr.Header().Get("Location"); loc != partsPath {
+		t.Fatalf("expected redirect to %s, got %q", partsPath, loc)
 	}
 	parts := app.ownedParts("alice")
 	if len(parts) != 1 || parts[0].SlotID.Valid {

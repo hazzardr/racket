@@ -27,17 +27,16 @@
 
     <h3 class="group-label">{{if .IsMe}}Spares you lend{{else}}Spares they lend{{end}}</h3>
     {{if .Lending}}
-    <ul class="inv-list">
+    <ul class="part-grid">
       {{range .Lending}}
-      <li class="inv k-{{.State}}" style="{{.Style}}">
-        <i class="sp-port"></i>
-        <div class="inv-main">
-          <span class="inv-name">{{.Name}}</span>
-          <span class="inv-meta">{{.Category}}
-            {{- if .PriceCents.Valid}} · ${{money .PriceCents.Int64}}{{end}}
-            {{- if .Manufacturer.Valid}} · {{.Manufacturer.String}}{{end}}
-            {{- if .Model.Valid}} · {{.Model.String}}{{end}}</span>
-        </div>
+      <li class="mcard pcard k-{{.State}}" style="{{.Style}}">
+        <div class="pcard-head"><i class="pcard-led"></i><span class="slot-cat">{{.Category}}</span><span class="chip k-borrowed">lends it</span></div>
+        <h4 class="mcard-name">{{.Name}}</h4>
+        <p class="mcard-sub">
+          {{- if .PriceCents.Valid}}${{money .PriceCents.Int64}}{{else}}no price{{end}}
+          {{- if .Manufacturer.Valid}} · {{.Manufacturer.String}}{{end}}
+          {{- if .Model.Valid}} · {{.Model.String}}{{end}}</p>
+        <p class="pcard-links">{{template "pcpp_find" .Name}}</p>
       </li>
       {{end}}
     </ul>

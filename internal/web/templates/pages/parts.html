@@ -16,124 +16,164 @@
 {{/* The parts page body. Every parts action returns this whole fragment. */}}
 {{define "parts_board"}}
 <div id="parts-root" class="parts-root" hx-target="#parts-root" hx-swap="outerHTML">
-  <h3 class="group-label">Spares</h3>
-  {{if .Spares}}
-  <ul class="inv-list">{{range .Spares}}{{template "inventory_part" .}}{{end}}</ul>
-  {{else}}
-  <p class="none">Nothing spare. Parts you take out of a slot, or import without a machine, land here.</p>
-  {{end}}
+  <dl class="board-stats">
+    <div><dt>Spares</dt><dd>{{len .Spares}}</dd></div>
+    <div><dt>Lending</dt><dd>{{.Lending}}</dd></div>
+    <div><dt>Lent out</dt><dd>{{len .Lent}}</dd></div>
+    <div><dt>Borrowed</dt><dd>{{len .Borrowed}}</dd></div>
+  </dl>
 
-  <details class="panel add-spare"{{if .Form.Error}} open{{end}}>
-    <summary>Add a spare part</summary>
-    <form class="form" method="post" action="/parts" hx-post="/parts">
-      <label class="field">
-        <span class="field-label">Name</span>
-        <input name="name" type="text" value="{{.Form.Name}}" placeholder="AMD Ryzen 7 5700X 3.4 GHz 8-Core Processor" required>
-      </label>
-      <div class="field-row">
-        <label class="field">
-          <span class="field-label">Category</span>
-          <input name="category" type="text" value="{{.Form.Category}}" list="spare-cats" placeholder="CPU">
-        </label>
-        <label class="field">
-          <span class="field-label">Manufacturer</span>
-          <input name="manufacturer" type="text" value="{{.Form.Manufacturer}}">
-        </label>
-        <label class="field">
-          <span class="field-label">Model</span>
-          <input name="model" type="text" value="{{.Form.Model}}">
-        </label>
-        <label class="field">
-          <span class="field-label">Price</span>
-          <input name="price" type="text" value="{{.Form.Price}}" inputmode="decimal">
-        </label>
+  <div class="import-grid">
+    <div class="parts-main">
+      <h3 class="group-label">Spares</h3>
+      {{if .Spares}}
+      <ul class="part-grid">{{range .Spares}}{{template "spare_card" .}}{{end}}</ul>
+      {{else}}
+      <div class="machine-empty">
+        <span class="slot-cat">Empty shelf</span>
+        <span class="slot-name">Nothing spare</span>
+        <span class="slot-meta">Parts you take out of a slot land here, or add some on the right.</span>
       </div>
-      <datalist id="spare-cats">{{range .Cats}}<option value="{{.}}">{{end}}</datalist>
-      {{if .Form.Error}}<div class="status error" role="alert">{{.Form.Error}}</div>{{end}}
-      <div class="form-actions form-actions-split">
-        <span class="checks">
-          <label class="checkbox"><input name="lend" type="checkbox"{{if .Form.Lend}} checked{{end}}> Friends can borrow it</label>
-          <label class="checkbox"><input name="wanted" type="checkbox"{{if .Form.Wanted}} checked{{end}}> Not bought yet</label>
-        </span>
-        <button type="submit" class="btn btn-small">Add part</button>
-      </div>
-    </form>
-  </details>
+      {{end}}
 
-  <div class="loans">
-    <section class="panel">
-      <div class="panel-head">
-        <h3>Lent out</h3>
-        <p class="panel-note">Your parts in friends' machines.</p>
-      </div>
+      <h3 class="group-label">Lent out</h3>
       {{if .Lent}}
-      <ul class="inv-list">
+      <ul class="part-grid">
         {{range .Lent}}
-        <li class="inv k-borrowed" style="{{.Style}}">
-          <i class="sp-port"></i>
-          <div class="inv-main">
-            <span class="inv-name">{{.Name}}</span>
-            <span class="inv-meta">{{.Category}} · in {{if .Friend}}<a href="/users/{{.FriendID}}">{{.Friend}}</a>'s <a href="/machines/{{.MachineID}}">{{.MachineName}}</a>{{else}}a former member's {{.MachineName}}{{end}}</span>
+        <li class="mcard pcard k-borrowed" style="{{.Style}}">
+          <div class="pcard-head"><i class="pcard-led"></i><span class="slot-cat">{{.Category}}</span><span class="chip k-borrowed">on loan</span></div>
+          <h4 class="mcard-name">{{.Name}}</h4>
+          <p class="mcard-sub">in {{if .Friend}}<a href="/users/{{.FriendID}}">{{.Friend}}</a>'s <a href="/machines/{{.MachineID}}">{{.MachineName}}</a>{{else}}a former member's {{.MachineName}}{{end}}</p>
+          <div class="pcard-actions">
+            <form method="post" action="/parts/{{.ID}}/return" class="inline-form" hx-post="/parts/{{.ID}}/return">
+              <button type="submit" class="btn btn-small btn-secondary">Take back</button>
+            </form>
           </div>
-          <form method="post" action="/parts/{{.ID}}/return" class="inline-form inv-actions" hx-post="/parts/{{.ID}}/return">
-            <button type="submit" class="btn btn-small btn-secondary">Take back</button>
-          </form>
         </li>
         {{end}}
       </ul>
       {{else}}
-      <p class="none">Nothing lent out.</p>
+      <p class="none">Nothing lent out. Your parts in friends' machines show up here.</p>
       {{end}}
-    </section>
-    <section class="panel">
-      <div class="panel-head">
-        <h3>Borrowed</h3>
-        <p class="panel-note">Friends' parts in your machines.</p>
-      </div>
+
+      <h3 class="group-label">Borrowed</h3>
       {{if .Borrowed}}
-      <ul class="inv-list">
+      <ul class="part-grid">
         {{range .Borrowed}}
-        <li class="inv k-borrowed" style="{{.Style}}">
-          <i class="sp-port"></i>
-          <div class="inv-main">
-            <span class="inv-name">{{.Name}}</span>
-            <span class="inv-meta">{{.Category}} · from {{if .Friend}}<a href="/users/{{.FriendID}}">{{.Friend}}</a>{{else}}a former member{{end}}, in your <a href="/machines/{{.MachineID}}">{{.MachineName}}</a></span>
+        <li class="mcard pcard k-borrowed" style="{{.Style}}">
+          <div class="pcard-head"><i class="pcard-led"></i><span class="slot-cat">{{.Category}}</span><span class="chip k-borrowed">borrowed</span></div>
+          <h4 class="mcard-name">{{.Name}}</h4>
+          <p class="mcard-sub">from {{if .Friend}}<a href="/users/{{.FriendID}}">{{.Friend}}</a>{{else}}a former member{{end}}, in your <a href="/machines/{{.MachineID}}">{{.MachineName}}</a></p>
+          <div class="pcard-actions">
+            <form method="post" action="/parts/{{.ID}}/return" class="inline-form" hx-post="/parts/{{.ID}}/return">
+              <button type="submit" class="btn btn-small btn-secondary">Give back</button>
+            </form>
           </div>
-          <form method="post" action="/parts/{{.ID}}/return" class="inline-form inv-actions" hx-post="/parts/{{.ID}}/return">
-            <button type="submit" class="btn btn-small btn-secondary">Give back</button>
-          </form>
         </li>
         {{end}}
       </ul>
       {{else}}
-      <p class="none">Nothing borrowed.</p>
+      <p class="none">Nothing borrowed. Friends' parts in your machines show up here.</p>
       {{end}}
-    </section>
+    </div>
+
+    <div class="import-side">
+      <div class="panel" id="add-pcpp">
+        <div class="panel-head">
+          <h3>
+            From
+            <a href="https://pcpartpicker.com" target="_blank" rel="noopener noreferrer" class="external-link">PCPartPicker<span class="external-link-icon" aria-label="(opens in new tab)">&#8599;</span></a>
+          </h3>
+          <p class="panel-note">
+            On your list's page, choose <strong>Markup</strong>, then the <strong>Text</strong> tab.
+            Paste it here and every part becomes a spare.
+          </p>
+        </div>
+        <form class="form" method="post" action="/parts/import" hx-post="/parts/import">
+          <label class="field">
+            <span class="field-label">Your list</span>
+            <textarea class="paste" name="pcpartpicker_text" rows="7" required
+                      placeholder="PCPartPicker Part List: https://pcpartpicker.com/list/…&#10;&#10;CPU: AMD Ryzen 7 5700X …  ($159.99 @ Amazon)">{{.Import.Text}}</textarea>
+          </label>
+          {{if .Import.Error}}<div class="status error" role="alert">{{.Import.Error}}</div>{{end}}
+          <div class="form-actions form-actions-split">
+            <span class="checks">
+              <label class="checkbox"><input name="lend" type="checkbox"{{if .Import.Lend}} checked{{end}}> Friends can borrow them</label>
+              <label class="checkbox"><input name="wanted" type="checkbox"{{if .Import.Wanted}} checked{{end}}> Not bought yet</label>
+            </span>
+            <button type="submit" class="btn btn-small">Add parts</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel" id="add-spare">
+        <div class="panel-head">
+          <h3>By hand</h3>
+        </div>
+        <form class="form" method="post" action="/parts" hx-post="/parts">
+          <label class="field">
+            <span class="field-label">Name</span>
+            <input name="name" type="text" value="{{.Form.Name}}" placeholder="AMD Ryzen 7 5700X 3.4 GHz 8-Core Processor" required>
+          </label>
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">Category</span>
+              <input name="category" type="text" value="{{.Form.Category}}" list="spare-cats" placeholder="CPU">
+            </label>
+            <label class="field">
+              <span class="field-label">Price</span>
+              <input name="price" type="text" value="{{.Form.Price}}" inputmode="decimal">
+            </label>
+          </div>
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">Manufacturer</span>
+              <input name="manufacturer" type="text" value="{{.Form.Manufacturer}}">
+            </label>
+            <label class="field">
+              <span class="field-label">Model</span>
+              <input name="model" type="text" value="{{.Form.Model}}">
+            </label>
+          </div>
+          <datalist id="spare-cats">{{range .Cats}}<option value="{{.}}">{{end}}</datalist>
+          {{if .Form.Error}}<div class="status error" role="alert">{{.Form.Error}}</div>{{end}}
+          <div class="form-actions form-actions-split">
+            <span class="checks">
+              <label class="checkbox"><input name="lend" type="checkbox"{{if .Form.Lend}} checked{{end}}> Friends can borrow it</label>
+              <label class="checkbox"><input name="wanted" type="checkbox"{{if .Form.Wanted}} checked{{end}}> Not bought yet</label>
+            </span>
+            <button type="submit" class="btn btn-small">Add part</button>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 </div>
 {{end}}
 
-{{define "inventory_part"}}
-<li class="inv k-{{.State}}" style="{{.Style}}">
-  <i class="sp-port"></i>
-  <div class="inv-main">
-    <span class="inv-name">{{.Name}}</span>
-    <span class="inv-meta">{{.Category}} ·
-      {{- if eq .State "wanted"}} not bought{{if .PriceCents.Valid}}, ${{money .PriceCents.Int64}}{{end}}
-      {{- else if .PriceCents.Valid}} ${{money .PriceCents.Int64}}
-      {{- else}} no price{{end}}
-      {{- if .Manufacturer.Valid}} · {{.Manufacturer.String}}{{end}}
-      {{- if .Model.Valid}} · {{.Model.String}}{{end}}</span>
-    {{if .Wanters}}
-    <p class="inv-want">
-      <span class="chip k-wanted">{{.Friends}} {{if eq .Friends 1}}friend wants{{else}}friends want{{end}} this</span>
-      for {{range $i, $w := .Wanters}}{{if $i}}, {{end}}<a href="/users/{{$w.UserID}}">{{$w.UserName}}</a>'s <a href="/machines/{{$w.MachineID}}">{{$w.MachineName}}</a>{{end}}
-    </p>
-    {{end}}
+{{/* One of the viewer's spares, as a small card like a machine's. */}}
+{{define "spare_card"}}
+<li class="mcard pcard k-{{.State}}" style="{{.Style}}">
+  <div class="pcard-head">
+    <i class="pcard-led"></i><span class="slot-cat">{{.Category}}</span>
+    {{if eq .State "wanted"}}<span class="chip k-wanted">not bought</span>
+    {{- else if .Lendable}}<span class="chip k-borrowed">friends can borrow</span>
+    {{- else}}<span class="chip k-owned">spare</span>{{end}}
   </div>
-  <div class="inv-actions">
+  <h4 class="mcard-name">{{.Name}}</h4>
+  <p class="mcard-sub">
+    {{- if .PriceCents.Valid}}{{if eq .State "wanted"}}est. {{end}}${{money .PriceCents.Int64}}{{else}}no price{{end}}
+    {{- if .Manufacturer.Valid}} · {{.Manufacturer.String}}{{end}}
+    {{- if .Model.Valid}} · {{.Model.String}}{{end}}</p>
+  <p class="pcard-links">{{template "pcpp_find" .Name}}{{if .SourceUrl.Valid}} · {{template "pcpp_list" .SourceUrl.String}}{{end}}</p>
+  {{if .Wanters}}
+  <p class="pcard-want">
+    <span class="chip k-wanted">{{.Friends}} {{if eq .Friends 1}}friend wants{{else}}friends want{{end}} this</span>
+    for {{range $i, $w := .Wanters}}{{if $i}}, {{end}}<a href="/users/{{$w.UserID}}">{{$w.UserName}}</a>'s <a href="/machines/{{$w.MachineID}}">{{$w.MachineName}}</a>{{end}}
+  </p>
+  {{end}}
+  <div class="pcard-actions">
     {{if eq .Status "owned"}}
-    {{if .Lendable}}<span class="chip k-borrowed">friends can borrow</span>{{end}}
     <form method="post" action="/parts/{{.ID}}/lend" class="inline-form" hx-post="/parts/{{.ID}}/lend">
       <input type="hidden" name="lendable" value="{{if .Lendable}}0{{else}}1{{end}}">
       <button type="submit" class="btn btn-small btn-secondary">{{if .Lendable}}Stop lending{{else}}Lend to friends{{end}}</button>

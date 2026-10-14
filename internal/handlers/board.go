@@ -125,6 +125,10 @@ type slotCard struct {
 	CanEdit bool
 	// CanMarkBought: the part is the viewer's and not bought yet.
 	CanMarkBought bool
+	// MachineName and OwnerName name the machine and its owner, for a
+	// friend's read-only view.
+	MachineName string
+	OwnerName   string
 	// TakeOutLabel names the machine owner's button that takes the part out
 	// of the slot without deleting it ("" for other viewers).
 	TakeOutLabel string
@@ -238,7 +242,10 @@ type MachinePage struct {
 	Machine   db.Machine
 	OwnerName string
 	IsOwner   bool
-	Slots     []slotCard
+	// ViewerLent says a friend viewing the machine lent a part in it, so
+	// they may take it back.
+	ViewerLent bool
+	Slots      []slotCard
 	// Left and Right split Slots into the board's two columns.
 	Left, Right []slotCard
 	// Spares are the parts the viewer could put in a slot (owner only).
@@ -300,6 +307,8 @@ func (h *Handler) machineBoard(ctx context.Context, machine db.GetMachineRow, vi
 	}
 	for i, row := range rows {
 		page.Slots[i] = newSlotCard(row, viewerID, machine.Machine.OwnerID)
+		page.Slots[i].MachineName, page.Slots[i].OwnerName = machine.Machine.Name, machine.OwnerName
+		page.ViewerLent = page.ViewerLent || page.Slots[i].CanTakeBack
 		page.tally(row, viewerID)
 	}
 	page.fitSpares()

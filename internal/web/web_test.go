@@ -110,3 +110,12 @@ func TestAvatar(t *testing.T) {
 		})
 	}
 }
+
+func TestPCPPSearch(t *testing.T) {
+	search := funcs["pcppSearch"].(func(string) string)
+	got := search("Corsair Vengeance RGB 32 GB (2 x 16 GB) DDR5-6000 & more")
+	want := "https://pcpartpicker.com/search/?q=Corsair+Vengeance+RGB+32+GB+%282+x+16+GB%29+DDR5-6000+%26+more"
+	if got != want {
+		t.Errorf("pcppSearch = %q, want %q", got, want)
+	}
+}

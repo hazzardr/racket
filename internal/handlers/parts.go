@@ -24,10 +24,33 @@ type partsPage struct {
 	Spares   []inventoryPart
 	Lent     []loanRow
 	Borrowed []loanRow
+	// Lending counts the spares friends may borrow.
+	Lending int
 	// Cats are the suggested categories for a new spare.
 	Cats []string
-	// Form is the add-a-spare form, filled in again after a failed add.
-	Form spareForm
+	// Form and Import are the add-by-hand and PCPartPicker forms, filled
+	// in again after a failed add.
+	Form   spareForm
+	Import pcppForm
+}
+
+// pcppForm is the paste-a-PCPartPicker-list form's values.
+type pcppForm struct {
+	Error  string
+	Text   string
+	Wanted bool
+	Lend   bool
+}
+
+// partsNote is what a parts page action tells the page it re-renders: the
+// forms as they were sent, when adding failed.
+type partsNote struct {
+	form   spareForm
+	pasted pcppForm
+}
+
+func (n partsNote) failed() bool {
+	return n.form.Error != "" || n.pasted.Error != ""
 }
 
 // inventoryPart is one of the viewer's spares.
@@ -121,6 +144,9 @@ func (h *Handler) partsBoard(ctx context.Context, viewerID int64) (partsPage, er
 		p := newInventoryPart(s)
 		p.Wanters, p.Friends = wanters[s.ID], len(friends[s.ID])
 		page.Spares = append(page.Spares, p)
+		if s.Lendable && s.Status == partOwned {
+			page.Lending++
+		}
 	}
 
 	lent, err := h.queries.ListLentParts(ctx, viewerID)
@@ -160,8 +186,8 @@ func (h *Handler) PartsPage(w http.ResponseWriter, r *http.Request) {
 // native forms, or the re-rendered page body for htmx. A failed add
 // re-renders with the form filled in (422 for native forms, 200 for htmx
 // so it swaps in).
-func (h *Handler) finishPartsAction(w http.ResponseWriter, r *http.Request, form spareForm) {
-	if form.Error == "" && redirectNative(w, r, partsPath) {
+func (h *Handler) finishPartsAction(w http.ResponseWriter, r *http.Request, note partsNote) {
+	if !note.failed() && redirectNative(w, r, partsPath) {
 		return
 	}
 	page, err := h.partsBoard(r.Context(), viewer(r).ID)
@@ -169,7 +195,7 @@ func (h *Handler) finishPartsAction(w http.ResponseWriter, r *http.Request, form
 		h.serverError(w, r, err)
 		return
 	}
-	page.Form = form
+	page.Form, page.Import = note.form, note.pasted
 	if isHX(r) {
 		h.web.Fragment(w, "parts_board", page)
 		return
@@ -204,7 +230,7 @@ func (h *Handler) CreateSparePart(w http.ResponseWriter, r *http.Request) {
 		form.Error = "Part name is required."
 	}
 	if form.Error != "" {
-		h.finishPartsAction(w, r, form)
+		h.finishPartsAction(w, r, partsNote{form: form})
 		return
 	}
 	status := partOwned
@@ -227,7 +253,53 @@ func (h *Handler) CreateSparePart(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	h.finishPartsAction(w, r, spareForm{})
+	h.finishPartsAction(w, r, partsNote{})
+}
+
+// ImportSpares handles POST /parts/import: a pasted PCPartPicker list
+// (its Markup > Text) becomes the viewer's spares, all at once.
+func (h *Handler) ImportSpares(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportBody)
+	if err := r.ParseForm(); err != nil {
+		h.renderError(w, r, http.StatusBadRequest, "failed to parse form")
+		return
+	}
+	form := pcppForm{
+		Text:   strings.TrimSpace(r.FormValue("pcpartpicker_text")),
+		Wanted: r.FormValue("wanted") != "",
+		Lend:   r.FormValue("lend") != "",
+	}
+	rows, source, msg := importRows(form.Text, nil)
+	if msg != "" {
+		form.Error = msg
+		h.finishPartsAction(w, r, partsNote{pasted: form})
+		return
+	}
+	status := partOwned
+	if form.Wanted {
+		status = partWanted
+	}
+
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := h.queries.WithTx(tx)
+	for _, row := range rows {
+		p := rowToCreateParams(row, viewer(r).ID, sql.NullInt64{}, status, source)
+		p.Lendable = form.Lend && !form.Wanted
+		if _, err := q.CreatePart(r.Context(), p); err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	h.finishPartsAction(w, r, partsNote{})
 }
 
 // partAction parses a parts page action's part ID, or renders a 400.
@@ -255,7 +327,7 @@ func (h *Handler) finishPartWrite(w http.ResponseWriter, r *http.Request, n int6
 		h.forbidden(w, r)
 		return
 	}
-	h.finishPartsAction(w, r, spareForm{})
+	h.finishPartsAction(w, r, partsNote{})
 }
 
 // SetPartLendable handles POST /parts/{id}/lend (form field "lendable":

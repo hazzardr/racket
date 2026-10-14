@@ -54,6 +54,11 @@ var funcs = template.FuncMap{
 	"hasPrefix": strings.HasPrefix,
 	"ago":       ago,
 	"avatar":    avatar,
+	// pcppSearch is a PCPartPicker search for a part's name. Imported
+	// names are PCPartPicker's own, so the product is usually the first hit.
+	"pcppSearch": func(name string) string {
+		return "https://pcpartpicker.com/search/?q=" + url.QueryEscape(name)
+	},
 	// initial is the first letter of a name, for a user without an avatar.
 	"initial": func(name string) string {
 		for _, r := range name {

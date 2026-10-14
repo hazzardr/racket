@@ -91,3 +91,16 @@ func TestOwnSpareComesFirst(t *testing.T) {
 	page := app.get(alice, machinePath(alicePC, ""))
 	assertContains(t, page, `<span class="match">you have one</span>`, "Your spare", "Use it", "bob's spare")
 }
+
+// A friend who lent a part in a machine is told they can take it back.
+func TestLenderViewsBorrowersMachine(t *testing.T) {
+	app := newTestApp(t)
+	alice, bob := app.login("alice"), app.login("bob")
+	bobPC := app.createMachine(bob, "bob-pc")
+	gpu := app.sparePart(app.user("alice"), "RTX 3080")
+	app.borrow(app.user("bob"), gpu, app.slots(bobPC)[6].ID)
+
+	page := app.get(alice, machinePath(bobPC, ""))
+	assertContains(t, page, "You can take back parts you lent them.", "This one is yours, so you can take it back.",
+		">Take back<")
+}

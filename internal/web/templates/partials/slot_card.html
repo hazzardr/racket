@@ -48,6 +48,8 @@
     <dt>{{if eq .State "wanted"}}Estimate{{else}}Price{{end}}</dt>
     <dd>{{if .PartPriceCents.Valid}}${{money .PartPriceCents.Int64}}{{else}}none{{end}}</dd>
     {{if .PriceDelta}}<dt>Last check</dt><dd>{{if .PriceDown}}down{{else}}up{{end}} ${{money .PriceDelta}}</dd>{{end}}
+    <dt>Links</dt>
+    <dd>{{template "pcpp_find" .PartName.String}}{{if .PartSourceUrl.Valid}} · {{template "pcpp_list" .PartSourceUrl.String}}{{end}}</dd>
   </dl>
   {{if .PartMissingFromSourceAt.Valid}}
   <p class="pn-note">Not on its PCPartPicker list anymore (checked {{ago .PartMissingFromSourceAt.Time}}).</p>
@@ -127,7 +129,11 @@
     </form>
   </div>
   {{else}}
-  <p class="pn-note">Nothing in this slot yet.</p>
+  <p class="pn-note">Nothing in this slot yet. Only {{.OwnerName}} can add parts to {{.MachineName}}.</p>
+  {{end}}
+  {{if and .PartID.Valid (not .CanEdit)}}
+  <p class="pn-note">Only {{.OwnerName}} can change the parts in {{.MachineName}}.
+    {{- if .CanTakeBack}} This one is yours, so you can take it back.{{end}}</p>
   {{end}}
 
   {{if .CanEdit}}

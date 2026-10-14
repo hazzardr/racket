@@ -133,8 +133,8 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Redirect to the machine page if one was named, else to the machines list.
-	redirect := machinesPath
+	// Redirect to the machine page if one was named, else to the spares.
+	redirect := partsPath
 	if machineID != 0 {
 		redirect = fmt.Sprintf("%s/%d", machinesPath, machineID)
 	}
