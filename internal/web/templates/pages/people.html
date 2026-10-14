@@ -1,0 +1,45 @@
+{{template "page_top" .}}
+{{with .Data}}
+  <section class="people-page">
+    <div class="page-head">
+      <div>
+        <h2 class="page-title">People</h2>
+        <p class="page-lead">
+          Everyone in the server who has signed in. Friends see each other's
+          machines and can borrow the spares each other lends.
+        </p>
+      </div>
+      <form class="people-search" method="get" action="/people" role="search">
+        <input type="search" name="q" value="{{.Query}}" placeholder="Search by name" aria-label="Search people"
+               hx-get="/people" hx-trigger="input changed delay:200ms, search" hx-target="#people-list"
+               hx-select="#people-list" hx-swap="outerHTML" hx-replace-url="true">
+      </form>
+    </div>
+    <div id="people-list">
+      {{if .People}}
+      <ul class="people-grid">
+        {{range .People}}
+        <li>
+          <a class="person" href="/users/{{.User.ID}}">
+            {{template "user_avatar" .User}}
+            <span class="person-id">
+              <span class="person-name">{{or .User.DisplayName.String .User.Username}}{{if eq .User.ID $.User.ID}} <span class="chip">you</span>{{end}}</span>
+              <span class="person-handle">@{{.User.Username}}</span>
+            </span>
+            <span class="person-stats">
+              {{- .MachineCount}} {{if eq .MachineCount 1}}machine{{else}}machines{{end}} · {{/**/ -}}
+              {{if .LendingCount}}<b>{{.LendingCount}} {{if eq .LendingCount 1}}spare{{else}}spares{{end}} to lend</b>{{else}}nothing to lend{{end -}}
+            </span>
+          </a>
+        </li>
+        {{end}}
+      </ul>
+      {{else if .Query}}
+      <p class="none">Nobody matches “{{.Query}}”. People show up here once they've signed in.</p>
+      {{else}}
+      <p class="none">Nobody here yet.</p>
+      {{end}}
+    </div>
+  </section>
+{{end}}
+{{template "page_bottom" .}}

@@ -73,7 +73,7 @@
           <i class="sp-port"></i>
           <div class="inv-main">
             <span class="inv-name">{{.Name}}</span>
-            <span class="inv-meta">{{.Category}} · in {{if .Friend}}{{.Friend}}'s <a href="/machines/{{.MachineID}}">{{.MachineName}}</a>{{else}}a former member's {{.MachineName}}{{end}}</span>
+            <span class="inv-meta">{{.Category}} · in {{if .Friend}}<a href="/users/{{.FriendID}}">{{.Friend}}</a>'s <a href="/machines/{{.MachineID}}">{{.MachineName}}</a>{{else}}a former member's {{.MachineName}}{{end}}</span>
           </div>
           <form method="post" action="/parts/{{.ID}}/return" class="inline-form inv-actions" hx-post="/parts/{{.ID}}/return">
             <button type="submit" class="btn btn-small btn-secondary">Take back</button>
@@ -97,7 +97,7 @@
           <i class="sp-port"></i>
           <div class="inv-main">
             <span class="inv-name">{{.Name}}</span>
-            <span class="inv-meta">{{.Category}} · from {{or .Friend "a former member"}}, in your <a href="/machines/{{.MachineID}}">{{.MachineName}}</a></span>
+            <span class="inv-meta">{{.Category}} · from {{if .Friend}}<a href="/users/{{.FriendID}}">{{.Friend}}</a>{{else}}a former member{{end}}, in your <a href="/machines/{{.MachineID}}">{{.MachineName}}</a></span>
           </div>
           <form method="post" action="/parts/{{.ID}}/return" class="inline-form inv-actions" hx-post="/parts/{{.ID}}/return">
             <button type="submit" class="btn btn-small btn-secondary">Give back</button>
@@ -127,7 +127,7 @@
     {{if .Wanters}}
     <p class="inv-want">
       <span class="chip k-wanted">{{.Friends}} {{if eq .Friends 1}}friend wants{{else}}friends want{{end}} this</span>
-      for {{range $i, $w := .Wanters}}{{if $i}}, {{end}}{{$w.UserName}}'s <a href="/machines/{{$w.MachineID}}">{{$w.MachineName}}</a>{{end}}
+      for {{range $i, $w := .Wanters}}{{if $i}}, {{end}}<a href="/users/{{$w.UserID}}">{{$w.UserName}}</a>'s <a href="/machines/{{$w.MachineID}}">{{$w.MachineName}}</a>{{end}}
     </p>
     {{end}}
   </div>

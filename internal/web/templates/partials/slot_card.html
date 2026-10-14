@@ -44,7 +44,7 @@
   {{if .PartID.Valid}}
   <dl class="pn-dl">
     {{if .PartModel.Valid}}<dt>Model</dt><dd>{{.PartModel.String}}</dd>{{end}}
-    <dt>Owner</dt><dd>{{if eq .PartSource "former_member"}}a former member{{else}}{{.PartOwnerName.String}}{{end}}</dd>
+    <dt>Owner</dt><dd>{{if eq .PartSource "former_member"}}a former member{{else}}<a href="/users/{{.PartOwnerID.Int64}}">{{.PartOwnerName.String}}</a>{{end}}</dd>
     <dt>{{if eq .State "wanted"}}Estimate{{else}}Price{{end}}</dt>
     <dd>{{if .PartPriceCents.Valid}}${{money .PartPriceCents.Int64}}{{else}}none{{end}}</dd>
     {{if .PriceDelta}}<dt>Last check</dt><dd>{{if .PriceDown}}down{{else}}up{{end}} ${{money .PriceDelta}}</dd>{{end}}

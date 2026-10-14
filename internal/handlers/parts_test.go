@@ -91,9 +91,9 @@ func TestLendingASpare(t *testing.T) {
 
 	// It shows as lent out for Alice and borrowed for Bob.
 	rr = app.get(alice, partsPath)
-	assertContains(t, rr, "Lent out", "in bob's <a href=\"/machines/", "Take back")
+	assertContains(t, rr, "Lent out", `in <a href="/users/2">bob</a>'s <a href="/machines/`, "Take back")
 	rr = app.get(bob, partsPath)
-	assertContains(t, rr, "from alice, in your <a href=\"/machines/", "Give back")
+	assertContains(t, rr, `from <a href="/users/1">alice</a>, in your <a href="/machines/`, "Give back")
 
 	// Stopping lending leaves it where it is.
 	assertStatus(t, app.post(alice, partPath(gpuID, "/lend"), url.Values{"lendable": {"0"}}), http.StatusSeeOther)
@@ -167,8 +167,9 @@ func TestSpareDemand(t *testing.T) {
 	rr := app.get(alice, partsPath)
 	assertContains(t, rr,
 		"2 friends want this",
-		`bob's <a href="/machines/2">bob-nas</a>, bob's <a href="/machines/1">bob-plan</a>`,
-		`carol's <a href="/machines/3">carol-plan</a>`)
+		`<a href="/users/2">bob</a>'s <a href="/machines/2">bob-nas</a>, `+
+			`<a href="/users/2">bob</a>'s <a href="/machines/1">bob-plan</a>`,
+		`<a href="/users/3">carol</a>'s <a href="/machines/3">carol-plan</a>`)
 	if n := countOf(rr, "want this"); n != 1 {
 		t.Errorf(`"want this" shown %d times, want once (only the CPU is wanted)`, n)
 	}

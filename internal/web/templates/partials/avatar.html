@@ -1,0 +1,7 @@
+{{/* A user's Discord avatar, or their initial for users who signed in
+     without Discord. Takes a db.User. */}}
+{{define "user_avatar" -}}
+{{- $src := avatar .DiscordID .AvatarHash -}}
+{{- if $src}}<img class="avatar" src="{{$src}}" alt="" loading="lazy" referrerpolicy="no-referrer">
+{{- else}}<span class="avatar avatar-initial" aria-hidden="true">{{initial (or .DisplayName.String .Username)}}</span>{{end}}
+{{- end}}

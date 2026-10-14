@@ -51,6 +51,8 @@ func (h *Handler) Routes() http.Handler {
 		r.Post("/parts/{id}/lend", h.SetPartLendable)
 		r.Post("/parts/{id}/return", h.ReturnPart)
 		r.Post("/parts/{id}/delete", h.DeleteSparePart)
+		r.Get("/people", h.PeoplePage)
+		r.Get("/users/{id}", h.ProfilePage)
 		r.Get("/import", h.ImportPage)
 		r.Post("/import", h.Import)
 	})

@@ -44,6 +44,7 @@ type inventoryPart struct {
 
 // wanter is a friend's machine that wants a spare.
 type wanter struct {
+	UserID      int64
 	UserName    string
 	MachineID   int64
 	MachineName string
@@ -59,6 +60,7 @@ type loanRow struct {
 	MachineID   int64
 	MachineName string
 	Friend      string
+	FriendID    int64
 }
 
 // spareForm is the add-a-spare form's values.
@@ -108,7 +110,7 @@ func (h *Handler) partsBoard(ctx context.Context, viewerID int64) (partsPage, er
 	wanters := map[int64][]wanter{}
 	friends := map[int64]map[int64]bool{}
 	for _, d := range demand {
-		w := wanter{UserName: d.Username, MachineID: d.MachineID, MachineName: d.MachineName}
+		w := wanter{UserID: d.UserID, UserName: d.Username, MachineID: d.MachineID, MachineName: d.MachineName}
 		wanters[d.PartID] = append(wanters[d.PartID], w)
 		if friends[d.PartID] == nil {
 			friends[d.PartID] = map[int64]bool{}
@@ -127,7 +129,8 @@ func (h *Handler) partsBoard(ctx context.Context, viewerID int64) (partsPage, er
 	}
 	for _, l := range lent {
 		page.Lent = append(page.Lent, newLoanRow(loanRow{
-			ID: l.ID, Name: l.Name, MachineID: l.MachineID, MachineName: l.MachineName, Friend: l.BorrowerName,
+			ID: l.ID, Name: l.Name, MachineID: l.MachineID, MachineName: l.MachineName,
+			Friend: l.BorrowerName, FriendID: l.BorrowerID,
 		}, l.Category, l.BorrowerLeftAt.Valid))
 	}
 	borrowed, err := h.queries.ListBorrowedParts(ctx, viewerID)
@@ -136,7 +139,8 @@ func (h *Handler) partsBoard(ctx context.Context, viewerID int64) (partsPage, er
 	}
 	for _, b := range borrowed {
 		page.Borrowed = append(page.Borrowed, newLoanRow(loanRow{
-			ID: b.ID, Name: b.Name, MachineID: b.MachineID, MachineName: b.MachineName, Friend: b.LenderName,
+			ID: b.ID, Name: b.Name, MachineID: b.MachineID, MachineName: b.MachineName,
+			Friend: b.LenderName, FriendID: b.LenderID,
 		}, b.Category, b.LenderLeftAt.Valid))
 	}
 	return page, nil

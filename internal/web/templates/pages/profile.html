@@ -1,0 +1,50 @@
+{{template "page_top" .}}
+{{with .Data}}
+  <section class="profile-page">
+    <a href="/people" class="back-link">&larr; People</a>
+    <div class="page-head profile-head">
+      <div class="profile-id">
+        {{template "user_avatar" .Member}}
+        <div>
+          <h2 class="page-title">{{or .Member.DisplayName.String .Member.Username}}</h2>
+          <p class="meta">@{{.Member.Username}} · joined {{.Member.CreatedAt.Format "January 2006"}}{{if .IsMe}} · this is you{{end}}</p>
+        </div>
+      </div>
+      {{if .IsMe}}
+      <div class="section-actions">
+        <a href="/parts" class="btn btn-secondary">Your parts</a>
+        <a href="/machines/new" class="btn">New machine</a>
+      </div>
+      {{end}}
+    </div>
+
+    <h3 class="group-label">Machines</h3>
+    {{if .Machines}}
+    <ul class="machine-grid">{{range .Machines}}{{template "machine_card" .}}{{end}}</ul>
+    {{else}}
+    <p class="none">No machines yet.</p>
+    {{end}}
+
+    <h3 class="group-label">{{if .IsMe}}Spares you lend{{else}}Spares they lend{{end}}</h3>
+    {{if .Lending}}
+    <ul class="inv-list">
+      {{range .Lending}}
+      <li class="inv k-{{.State}}" style="{{.Style}}">
+        <i class="sp-port"></i>
+        <div class="inv-main">
+          <span class="inv-name">{{.Name}}</span>
+          <span class="inv-meta">{{.Category}}
+            {{- if .PriceCents.Valid}} · ${{money .PriceCents.Int64}}{{end}}
+            {{- if .Manufacturer.Valid}} · {{.Manufacturer.String}}{{end}}
+            {{- if .Model.Valid}} · {{.Model.String}}{{end}}</span>
+        </div>
+      </li>
+      {{end}}
+    </ul>
+    <p class="meta">{{if .IsMe}}Choose what you lend on <a href="/parts">your parts page</a>.{{else}}Borrow one from the spare-parts tray on any of your machines.{{end}}</p>
+    {{else}}
+    <p class="none">Nothing to lend right now.</p>
+    {{end}}
+  </section>
+{{end}}
+{{template "page_bottom" .}}

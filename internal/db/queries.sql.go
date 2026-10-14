@@ -371,6 +371,28 @@ func (q *Queries) GetMachineByOwnerAndName(ctx context.Context, arg GetMachineBy
 	return i, err
 }
 
+const getMember = `-- name: GetMember :one
+SELECT id, discord_id, username, display_name, avatar_hash, is_admin, created_at, last_login_at, deleted_at FROM users WHERE id = ? AND deleted_at IS NULL
+`
+
+// A member who hasn't left.
+func (q *Queries) GetMember(ctx context.Context, id int64) (User, error) {
+	row := q.db.QueryRowContext(ctx, getMember, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.DiscordID,
+		&i.Username,
+		&i.DisplayName,
+		&i.AvatarHash,
+		&i.IsAdmin,
+		&i.CreatedAt,
+		&i.LastLoginAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const getSessionUser = `-- name: GetSessionUser :one
 SELECT users.id, users.discord_id, users.username, users.display_name, users.avatar_hash, users.is_admin, users.created_at, users.last_login_at, users.deleted_at FROM sessions
 JOIN users ON users.id = sessions.user_id
@@ -436,7 +458,7 @@ func (q *Queries) GetSlot(ctx context.Context, id int64) (GetSlotRow, error) {
 const listBorrowedParts = `-- name: ListBorrowedParts :many
 SELECT parts.id, parts.name, parts.category,
        machines.id AS machine_id, machines.name AS machine_name,
-       users.username AS lender_name, users.deleted_at AS lender_left_at
+       users.id AS lender_id, users.username AS lender_name, users.deleted_at AS lender_left_at
 FROM parts
 JOIN machine_slots s ON s.id = parts.slot_id
 JOIN machines ON machines.id = s.machine_id
@@ -451,6 +473,7 @@ type ListBorrowedPartsRow struct {
 	Category     sql.NullString
 	MachineID    int64
 	MachineName  string
+	LenderID     int64
 	LenderName   string
 	LenderLeftAt sql.NullTime
 }
@@ -472,8 +495,64 @@ func (q *Queries) ListBorrowedParts(ctx context.Context, userID int64) ([]ListBo
 			&i.Category,
 			&i.MachineID,
 			&i.MachineName,
+			&i.LenderID,
 			&i.LenderName,
 			&i.LenderLeftAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLendingSpares = `-- name: ListLendingSpares :many
+SELECT id, owner_id, slot_id, status, name, category, manufacturer, model, serial_number, price_cents, currency, purchased_on, purchased_from, warranty_expires, product_url, guide_url, notes, created_at, updated_at, source_url, price_checked_at, previous_price_cents, missing_from_source_at, lendable FROM parts
+WHERE owner_id = ? AND status = 'owned' AND lendable AND slot_id IS NULL
+ORDER BY lower(coalesce(category, '')), lower(name), id
+`
+
+// The spares a user lends, for their profile.
+func (q *Queries) ListLendingSpares(ctx context.Context, ownerID int64) ([]Part, error) {
+	rows, err := q.db.QueryContext(ctx, listLendingSpares, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Part
+	for rows.Next() {
+		var i Part
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.SlotID,
+			&i.Status,
+			&i.Name,
+			&i.Category,
+			&i.Manufacturer,
+			&i.Model,
+			&i.SerialNumber,
+			&i.PriceCents,
+			&i.Currency,
+			&i.PurchasedOn,
+			&i.PurchasedFrom,
+			&i.WarrantyExpires,
+			&i.ProductUrl,
+			&i.GuideUrl,
+			&i.Notes,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SourceUrl,
+			&i.PriceCheckedAt,
+			&i.PreviousPriceCents,
+			&i.MissingFromSourceAt,
+			&i.Lendable,
 		); err != nil {
 			return nil, err
 		}
@@ -491,7 +570,7 @@ func (q *Queries) ListBorrowedParts(ctx context.Context, userID int64) ([]ListBo
 const listLentParts = `-- name: ListLentParts :many
 SELECT parts.id, parts.name, parts.category,
        machines.id AS machine_id, machines.name AS machine_name,
-       users.username AS borrower_name, users.deleted_at AS borrower_left_at
+       users.id AS borrower_id, users.username AS borrower_name, users.deleted_at AS borrower_left_at
 FROM parts
 JOIN machine_slots s ON s.id = parts.slot_id
 JOIN machines ON machines.id = s.machine_id
@@ -506,6 +585,7 @@ type ListLentPartsRow struct {
 	Category       sql.NullString
 	MachineID      int64
 	MachineName    string
+	BorrowerID     int64
 	BorrowerName   string
 	BorrowerLeftAt sql.NullTime
 }
@@ -527,6 +607,7 @@ func (q *Queries) ListLentParts(ctx context.Context, userID int64) ([]ListLentPa
 			&i.Category,
 			&i.MachineID,
 			&i.MachineName,
+			&i.BorrowerID,
 			&i.BorrowerName,
 			&i.BorrowerLeftAt,
 		); err != nil {
@@ -595,6 +676,59 @@ func (q *Queries) ListMachines(ctx context.Context) ([]ListMachinesRow, error) {
 			&i.TotalSlots,
 			&i.FilledSlots,
 			&i.PartsTotalCents,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMembers = `-- name: ListMembers :many
+SELECT users.id, users.discord_id, users.username, users.display_name, users.avatar_hash, users.is_admin, users.created_at, users.last_login_at, users.deleted_at,
+    (SELECT count(*) FROM machines m WHERE m.owner_id = users.id) AS machine_count,
+    (SELECT count(*) FROM parts p
+     WHERE p.owner_id = users.id AND p.status = 'owned' AND p.lendable AND p.slot_id IS NULL) AS lending_count
+FROM users
+WHERE users.deleted_at IS NULL
+ORDER BY lower(coalesce(users.display_name, users.username)), users.id
+`
+
+type ListMembersRow struct {
+	User         User
+	MachineCount int64
+	LendingCount int64
+}
+
+// Members who haven't left, with how many machines they have and how many
+// spares they lend, for the people page.
+func (q *Queries) ListMembers(ctx context.Context) ([]ListMembersRow, error) {
+	rows, err := q.db.QueryContext(ctx, listMembers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMembersRow
+	for rows.Next() {
+		var i ListMembersRow
+		if err := rows.Scan(
+			&i.User.ID,
+			&i.User.DiscordID,
+			&i.User.Username,
+			&i.User.DisplayName,
+			&i.User.AvatarHash,
+			&i.User.IsAdmin,
+			&i.User.CreatedAt,
+			&i.User.LastLoginAt,
+			&i.User.DeletedAt,
+			&i.MachineCount,
+			&i.LendingCount,
 		); err != nil {
 			return nil, err
 		}

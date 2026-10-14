@@ -5,7 +5,7 @@
       <div class="machine-title">
         <a href="/machines" class="back-link">&larr; Machines</a>
         <h2 class="section-title">{{.Machine.Name}}{{if ne .Machine.Status "active"}} <span class="badge">{{.Machine.Status}}</span>{{end}}</h2>
-        <p class="meta">{{if .IsOwner}}yours{{else}}{{.OwnerName}}'s{{end}} {{.Machine.Kind}}
+        <p class="meta">{{if .IsOwner}}yours{{else}}<a href="/users/{{.Machine.OwnerID}}">{{.OwnerName}}</a>'s{{end}} {{.Machine.Kind}}
           {{- if .Machine.FormFactor.Valid}} · {{.Machine.FormFactor.String}}{{end}}
           {{- if .Machine.Location.Valid}} · {{.Machine.Location.String}}{{end}}
           {{- if .Machine.BuiltOn.Valid}} · built {{.Machine.BuiltOn.Time.Format "2006-01-02"}}{{end}}

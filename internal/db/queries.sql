@@ -39,6 +39,21 @@ DELETE FROM sessions WHERE user_id = ?;
 -- name: DeleteExpiredSessions :exec
 DELETE FROM sessions WHERE expires_at <= ?;
 
+-- name: ListMembers :many
+-- Members who haven't left, with how many machines they have and how many
+-- spares they lend, for the people page.
+SELECT sqlc.embed(users),
+    (SELECT count(*) FROM machines m WHERE m.owner_id = users.id) AS machine_count,
+    (SELECT count(*) FROM parts p
+     WHERE p.owner_id = users.id AND p.status = 'owned' AND p.lendable AND p.slot_id IS NULL) AS lending_count
+FROM users
+WHERE users.deleted_at IS NULL
+ORDER BY lower(coalesce(users.display_name, users.username)), users.id;
+
+-- name: GetMember :one
+-- A member who hasn't left.
+SELECT * FROM users WHERE id = ? AND deleted_at IS NULL;
+
 -- Machines ------------------------------------------------------------------
 
 -- name: ListMachines :many
@@ -245,12 +260,18 @@ WHERE s.machine_id = sqlc.arg(machine_id) AND want.status = 'wanted'
   AND (spare.owner_id = sqlc.arg(user_id) OR spare.lendable)
 ORDER BY s.position, s.id, spare.owner_id <> m.owner_id, lower(users.username), spare.id;
 
+-- name: ListLendingSpares :many
+-- The spares a user lends, for their profile.
+SELECT * FROM parts
+WHERE owner_id = ? AND status = 'owned' AND lendable AND slot_id IS NULL
+ORDER BY lower(coalesce(category, '')), lower(name), id;
+
 -- name: ListLentParts :many
 -- The user's parts in other users' machines, including machines of members
 -- who have left (the lender can still take those parts back).
 SELECT parts.id, parts.name, parts.category,
        machines.id AS machine_id, machines.name AS machine_name,
-       users.username AS borrower_name, users.deleted_at AS borrower_left_at
+       users.id AS borrower_id, users.username AS borrower_name, users.deleted_at AS borrower_left_at
 FROM parts
 JOIN machine_slots s ON s.id = parts.slot_id
 JOIN machines ON machines.id = s.machine_id
@@ -263,7 +284,7 @@ ORDER BY lower(users.username), lower(parts.name), parts.id;
 -- members who have left.
 SELECT parts.id, parts.name, parts.category,
        machines.id AS machine_id, machines.name AS machine_name,
-       users.username AS lender_name, users.deleted_at AS lender_left_at
+       users.id AS lender_id, users.username AS lender_name, users.deleted_at AS lender_left_at
 FROM parts
 JOIN machine_slots s ON s.id = parts.slot_id
 JOIN machines ON machines.id = s.machine_id
