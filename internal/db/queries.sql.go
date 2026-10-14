@@ -455,6 +455,56 @@ func (q *Queries) GetSlot(ctx context.Context, id int64) (GetSlotRow, error) {
 	return i, err
 }
 
+const listBorrowTargets = `-- name: ListBorrowTargets :many
+SELECT s.id AS slot_id, s.category, m.id AS machine_id, m.name AS machine_name,
+       p.name AS wanted_name
+FROM machine_slots s
+JOIN machines m ON m.id = s.machine_id
+LEFT JOIN parts p ON p.slot_id = s.id
+WHERE m.owner_id = ?1
+  AND (p.id IS NULL OR (p.status = 'wanted' AND p.owner_id = m.owner_id))
+ORDER BY lower(m.name), m.id, s.position, s.id
+`
+
+type ListBorrowTargetsRow struct {
+	SlotID      int64
+	Category    string
+	MachineID   int64
+	MachineName string
+	WantedName  sql.NullString
+}
+
+// The slots in the user's machines a borrowed part could go in: empty
+// ones, and ones holding the user's own part not bought yet (wanted_name).
+func (q *Queries) ListBorrowTargets(ctx context.Context, userID int64) ([]ListBorrowTargetsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBorrowTargets, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBorrowTargetsRow
+	for rows.Next() {
+		var i ListBorrowTargetsRow
+		if err := rows.Scan(
+			&i.SlotID,
+			&i.Category,
+			&i.MachineID,
+			&i.MachineName,
+			&i.WantedName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBorrowedParts = `-- name: ListBorrowedParts :many
 SELECT parts.id, parts.name, parts.category,
        machines.id AS machine_id, machines.name AS machine_name,
@@ -498,6 +548,71 @@ func (q *Queries) ListBorrowedParts(ctx context.Context, userID int64) ([]ListBo
 			&i.LenderID,
 			&i.LenderName,
 			&i.LenderLeftAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFriendSpares = `-- name: ListFriendSpares :many
+SELECT parts.id, parts.owner_id, parts.slot_id, parts.status, parts.name, parts.category, parts.manufacturer, parts.model, parts.serial_number, parts.price_cents, parts.currency, parts.purchased_on, parts.purchased_from, parts.warranty_expires, parts.product_url, parts.guide_url, parts.notes, parts.created_at, parts.updated_at, parts.source_url, parts.price_checked_at, parts.previous_price_cents, parts.missing_from_source_at, parts.lendable, users.username AS owner_name
+FROM parts
+JOIN users ON users.id = parts.owner_id
+WHERE parts.owner_id <> ?1 AND users.deleted_at IS NULL
+  AND parts.status = 'owned' AND parts.lendable AND parts.slot_id IS NULL
+ORDER BY lower(coalesce(parts.category, '')), lower(parts.name), lower(users.username), parts.id
+`
+
+type ListFriendSparesRow struct {
+	Part      Part
+	OwnerName string
+}
+
+// The spares other members who haven't left lend, for the parts page's
+// friends' view.
+func (q *Queries) ListFriendSpares(ctx context.Context, userID int64) ([]ListFriendSparesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listFriendSpares, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFriendSparesRow
+	for rows.Next() {
+		var i ListFriendSparesRow
+		if err := rows.Scan(
+			&i.Part.ID,
+			&i.Part.OwnerID,
+			&i.Part.SlotID,
+			&i.Part.Status,
+			&i.Part.Name,
+			&i.Part.Category,
+			&i.Part.Manufacturer,
+			&i.Part.Model,
+			&i.Part.SerialNumber,
+			&i.Part.PriceCents,
+			&i.Part.Currency,
+			&i.Part.PurchasedOn,
+			&i.Part.PurchasedFrom,
+			&i.Part.WarrantyExpires,
+			&i.Part.ProductUrl,
+			&i.Part.GuideUrl,
+			&i.Part.Notes,
+			&i.Part.CreatedAt,
+			&i.Part.UpdatedAt,
+			&i.Part.SourceUrl,
+			&i.Part.PriceCheckedAt,
+			&i.Part.PreviousPriceCents,
+			&i.Part.MissingFromSourceAt,
+			&i.Part.Lendable,
+			&i.OwnerName,
 		); err != nil {
 			return nil, err
 		}

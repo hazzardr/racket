@@ -3,11 +3,13 @@
 :root {
   /* Colors follow the system's light or dark setting unless the viewer
      picks one (theme.js sets data-theme). Each token is
-     light-dark(light value, dark value). */
+     light-dark(light value, dark value). Light mode is a soft slate, not
+     white, so the color coding stands out without glare; its status and
+     label colors are deep enough for 3:1 contrast on every surface. */
   color-scheme: light dark;
-  --color-bg: light-dark(#f5f7fb, #070b14);
-  --color-surface: light-dark(#ffffff, #0e1628);
-  --color-border: light-dark(#d8dfeb, #1f2b43);
+  --color-bg: light-dark(#e6eaf0, #070b14);
+  --color-surface: light-dark(#f1f4f8, #0e1628);
+  --color-border: light-dark(#cbd3df, #1f2b43);
   --color-text: light-dark(#111827, #e6edf7);
   --color-text-muted: light-dark(#4b5870, #9aa8c2);
   --color-accent: light-dark(#2f66d8, #7aa7ff);
@@ -15,20 +17,20 @@
   --color-danger: light-dark(#d02f2f, #f87171);
 
   /* Machine board */
-  --board: light-dark(#edf1f7, #0a1020);
-  --bay: light-dark(#f7f9fc, #0b1222);
-  --chassis-top: light-dark(#ffffff, #111b31);
-  --glass: light-dark(rgba(255, 255, 255, 0.96), rgba(10, 15, 28, 0.92));
+  --board: light-dark(#dfe4ec, #0a1020);
+  --bay: light-dark(#edf1f6, #0b1222);
+  --chassis-top: light-dark(#f7f9fc, #111b31);
+  --glass: light-dark(rgba(241, 244, 248, 0.96), rgba(10, 15, 28, 0.92));
   --line: light-dark(rgba(30, 45, 80, 0.13), rgba(148, 163, 196, 0.13));
   --line-2: light-dark(rgba(30, 45, 80, 0.25), rgba(148, 163, 196, 0.26));
   --grid: light-dark(rgba(30, 45, 80, 0.13), rgba(148, 163, 196, 0.09));
   --vent: light-dark(rgba(30, 45, 80, 0.14), rgba(148, 163, 196, 0.16));
-  --shadow: light-dark(rgba(15, 23, 42, 0.18), var(--shadow));
+  --shadow: light-dark(rgba(15, 23, 42, 0.18), rgba(0, 0, 0, 0.6));
   --sheen: light-dark(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.04));
-  --dim: light-dark(#7a869c, #5f6d88);
-  --owned: light-dark(#15a34a, #4ade80);
+  --dim: light-dark(#66728a, #5f6d88);
+  --owned: light-dark(#12873e, #4ade80);
   --wanted: light-dark(#2f66d8, #8ab4ff);
-  --borrowed: light-dark(#e2620b, #fb923c);
+  --borrowed: light-dark(#c2530a, #fb923c);
   --empty: light-dark(#8b96aa, #5f6d88);
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
@@ -42,9 +44,29 @@
 }
 
 /* --tc is an element's part-type color (--type, from board.go), darkened
-   on light backgrounds, where the pastels would wash out. */
+   on light backgrounds, where the pastels would wash out. Setting only the
+   lightness keeps each type's hue and saturation, so the types stay
+   distinct, and gives every one 3:1 contrast on the light slate surfaces.
+   Browsers without relative colors mix toward slate instead. */
 [style*="--type"] {
-  --tc: light-dark(color-mix(in oklab, var(--type) 68%, #1e293b), var(--type));
+  --tc: light-dark(color-mix(in oklab, var(--type) 55%, #1e293b), var(--type));
+}
+
+@supports (color: oklch(from red l c h)) {
+  [style*="--type"] {
+    --tc: light-dark(oklch(from var(--type) 0.58 c h), var(--type));
+  }
+}
+
+/* Plain links in running text: names, machines, and "your parts page".
+   :where keeps this weaker than any component's own link styles (tabs). */
+main :where(a:not([class])) {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+main :where(a:not([class]):hover) {
+  text-decoration: underline;
 }
 
 * {
@@ -331,10 +353,103 @@ body {
   font-size: 0.75rem;
 }
 
-.nav-user,
-.nav a.nav-user {
+.nav-user {
   color: var(--color-text);
   font-size: 0.9375rem;
+}
+
+/* The signed-in user's menu: their avatar and name, opening onto their
+   own pages and actions. */
+.user-menu {
+  position: relative;
+}
+
+.user-menu summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.user-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.user-menu summary:hover,
+.user-menu[open] summary {
+  border-color: var(--line-2);
+  background: var(--board);
+}
+
+.user-menu summary .avatar {
+  width: 26px;
+  height: 26px;
+}
+
+.user-menu summary .avatar-initial {
+  font-size: 0.75rem;
+}
+
+.user-menu .chev {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--color-text-muted);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.2s;
+}
+
+.user-menu[open] .chev {
+  transform: rotate(180deg);
+}
+
+.user-menu .menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 70;
+  display: grid;
+  min-width: 14rem;
+  padding: 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: 0 18px 40px -12px var(--shadow);
+}
+
+.user-menu .menu a,
+.user-menu .menu button {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.9375rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.user-menu .menu a:hover,
+.user-menu .menu a:focus-visible,
+.user-menu .menu button:hover,
+.user-menu .menu button:focus-visible {
+  background: var(--board);
+}
+
+.user-menu hr {
+  margin: 4px 2px;
+  border: 0;
+  border-top: 1px solid var(--line);
 }
 
 .btn-link {
@@ -1194,8 +1309,8 @@ body {
 .chip.k-wanted { --st: var(--wanted); }
 .chip.k-borrowed { --st: var(--borrowed); }
 
-/* Wires: installed parts are dotted, unbought ones dashed, empty slots
-   faintly dotted. */
+/* Wires: installed parts are solid, borrowed ones dotted, unbought ones
+   dashed, empty slots faintly dotted. */
 
 .wire {
   transition: opacity 0.3s;
@@ -1225,6 +1340,25 @@ body {
   stroke: var(--c);
   stroke-width: 2.6;
   stroke-dasharray: 1.5 8.5;
+}
+
+/* An installed part's wire is one solid line. Its dots stay hidden (by
+   stroke-opacity, which the seat animation in board.js doesn't touch) and
+   only march along it, as light beads, while it's hovered or open. */
+.wire.k-owned .base {
+  stroke-width: 2.2;
+  opacity: 0.85;
+}
+
+.wire.k-owned .flow {
+  stroke: var(--board);
+  stroke-width: 1.6;
+  stroke-opacity: 0;
+  transition: stroke-opacity 0.3s;
+}
+
+.wire.k-owned:is(.is-hl, .is-open) .flow {
+  stroke-opacity: 0.9;
 }
 
 .wire.k-wanted .base {
@@ -2191,8 +2325,8 @@ legend.field-label {
   margin: 1rem 0 0;
 }
 
-.parts-main .group-label:first-child {
-  margin-top: 0;
+.parts-main .board-stats {
+  margin-bottom: 0.5rem;
 }
 
 .parts-root .none,
@@ -2253,6 +2387,79 @@ legend.field-label {
 
 .pcard-want .chip {
   margin-right: 4px;
+}
+
+/* Tabs and category chips, as links: the board's segmented control and
+   add-slot chips. */
+.seg a {
+  padding: 0.375rem 0.7rem;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  text-decoration: none;
+}
+
+.seg a[aria-current="page"] {
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+
+.parts-tabs {
+  justify-self: start;
+}
+
+.cat-filters .add {
+  text-decoration: none;
+}
+
+.cat-filters .add span {
+  margin-left: 0.25rem;
+  color: var(--dim);
+  font-family: var(--mono);
+}
+
+.cat-filters .add[aria-current="true"] {
+  border-style: solid;
+  border-color: var(--tc, var(--color-accent));
+  color: var(--color-text);
+}
+
+.status-note {
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.parts-root > .status.error {
+  padding: 0;
+}
+
+.friend-group {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.friend-group .group-label {
+  margin: 0;
+}
+
+.pcard-borrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 4px;
+}
+
+.pcard-borrow select {
+  flex: 1;
+  min-width: 0;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.8125rem;
 }
 
 .pcard-actions {

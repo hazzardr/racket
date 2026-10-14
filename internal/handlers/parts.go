@@ -21,6 +21,10 @@ const partsPath = "/parts"
 // partsPage is the parts page data. The parts_board fragment renders from
 // it too.
 type partsPage struct {
+	// View is the tab showing: viewMine, or viewFriends with Friends.
+	View    string
+	Friends friendsView
+
 	Spares   []inventoryPart
 	Lent     []loanRow
 	Borrowed []loanRow
@@ -120,7 +124,7 @@ func newLoanRow(row loanRow, category sql.NullString, friendLeft bool) loanRow {
 
 // partsBoard loads the parts page data for the viewer.
 func (h *Handler) partsBoard(ctx context.Context, viewerID int64) (partsPage, error) {
-	page := partsPage{Cats: slices.Concat(commonSlots, []string{otherSlot})}
+	page := partsPage{View: viewMine, Cats: slices.Concat(commonSlots, []string{otherSlot})}
 
 	spares, err := h.queries.ListSparesByOwner(ctx, viewerID)
 	if err != nil {
@@ -172,8 +176,13 @@ func (h *Handler) partsBoard(ctx context.Context, viewerID int64) (partsPage, er
 	return page, nil
 }
 
-// PartsPage renders GET /parts.
+// PartsPage renders GET /parts: the viewer's parts, or with ?view=friends
+// the spares friends lend (narrowed to one category with ?cat=).
 func (h *Handler) PartsPage(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("view") == viewFriends {
+		h.renderFriendSpares(w, r, http.StatusOK, borrowNote{})
+		return
+	}
 	page, err := h.partsBoard(r.Context(), viewer(r).ID)
 	if err != nil {
 		h.serverError(w, r, err)

@@ -1,16 +1,16 @@
 {{template "page_top" .}}
 <section class="landing">
   <div class="hero">
-    <h2 class="hero-title">What is Racket?</h2>
+    <h2 class="hero-title">Put your hardware to use</h2>
     <p class="lead">
-      Racket (Rack-it) is a notebook for your hardware. Make an entry for each machine:
-        server, desktop, NAS, whatever's humming in the corner. Then log
-        the parts inside, so you never have to remember which stick of RAM
-        is in which box.
+      Racket (say it “rack-it”) keeps track of your machines and the parts
+      inside them. Lend your spares to friends and borrow theirs, so the GPU
+      in your drawer gets used instead of forgotten.
     </p>
     <p class="cta">
-      {{if .User}}<a href="/machines" class="btn">Your machines</a>{{else}}<a href="/login" class="btn">Log in</a>{{end}}
-      {{if .User}}<a href="/import" class="btn btn-secondary">Import from PCPartPicker</a>{{end}}
+      {{if .User}}<a href="/machines" class="btn">Your machines</a>
+      <a href="/parts?view=friends" class="btn btn-secondary">Borrow from friends</a>
+      {{- else}}<a href="/login" class="btn">Log in</a>{{end}}
     </p>
   </div>
 
@@ -117,22 +117,22 @@
     <div class="feature-card" style="--type:#a78bfa">
       <h3><i></i>Machines</h3>
       <p>
-        One entry per box: build date, purchase date, and where it lives
-          (the closet counts).
+        Each machine is a board of slots, wired to the parts inside.
+        Planned builds show what's left to buy and what it'll cost.
       </p>
     </div>
     <div class="feature-card" style="--type:#34d399">
-      <h3><i></i>Parts</h3>
+      <h3><i></i>Parts and lending</h3>
       <p>
-        Model, serial number, warranty, purchase info, and a guide URL —
-          the stuff you always need exactly once, at 11pm.
+        Spares sit on a shelf you can lend from. Borrow a friend's part
+        instead of buying one, and see what's on loan and with whom.
       </p>
     </div>
     <div class="feature-card" style="--type:#7aa7ff">
-      <h3><i></i>Easily self-hostable</h3>
+      <h3><i></i>PCPartPicker</h3>
       <p>
-        One Go binary and a SQLite file — download it, run it, done.
-          No database server or other moving pieces to set up.
+        Paste a list and each part lands in its slot. Paste it again later
+        to update the prices of everything you haven't bought yet.
       </p>
     </div>
   </div>

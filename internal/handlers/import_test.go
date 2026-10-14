@@ -274,6 +274,13 @@ func TestRenderTemplates(t *testing.T) {
 		{"profile.html", profilePage{
 			Member: *user, IsMe: true, Machines: []machineRow{{Mine: true}}, Lending: []inventoryPart{{}},
 		}},
+		{"parts.html", partsPage{View: viewFriends, Friends: friendsView{
+			Groups: []friendGroup{{Category: "GPU", Spares: []friendSpare{
+				{Targets: []borrowTarget{{Instead: true}}, Matches: []borrowTarget{{}}}, {},
+			}}},
+			Filters:  []categoryFilter{{Key: "gpu", Selected: true}},
+			Borrowed: &borrowTarget{}, Error: "x",
+		}}},
 		{"parts.html", partsPage{
 			Spares:   []inventoryPart{{Wanters: []wanter{{UserName: "bob"}}, Friends: 1}},
 			Lent:     []loanRow{{Friend: "bob"}},
@@ -290,7 +297,7 @@ func TestRenderTemplates(t *testing.T) {
 			rr := httptest.NewRecorder()
 			w.Render(rr, http.StatusOK, p.name, web.Page{User: user, Data: p.data})
 			assertStatus(t, rr, http.StatusOK)
-			assertContains(t, rr, "<!doctype html>", "</html>", `class="nav-user">alice</a>`)
+			assertContains(t, rr, "<!doctype html>", "</html>", `class="nav-user">alice</span>`)
 		})
 	}
 }
