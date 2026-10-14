@@ -23,15 +23,16 @@
        {{- if eq .View "friends"}} aria-current="page"{{end}}>Friends'</a>
   </nav>
   {{if eq .View "friends"}}{{template "friend_spares" .Friends}}{{else}}
-  <dl class="board-stats">
-    <div><dt>Spares</dt><dd>{{len .Spares}}</dd></div>
-    <div><dt>Lending</dt><dd>{{.Lending}}</dd></div>
-    <div><dt>Lent out</dt><dd>{{len .Lent}}</dd></div>
-    <div><dt>Borrowed</dt><dd>{{len .Borrowed}}</dd></div>
-  </dl>
-
   <div class="import-grid">
     <div class="parts-main">
+      {{/* The stats head the left column, so the add panels on the right
+           start level with them. */}}
+      <dl class="board-stats">
+        <div><dt>Spares</dt><dd>{{len .Spares}}</dd></div>
+        <div><dt>Lending</dt><dd>{{.Lending}}</dd></div>
+        <div><dt>Lent out</dt><dd>{{len .Lent}}</dd></div>
+        <div><dt>Borrowed</dt><dd>{{len .Borrowed}}</dd></div>
+      </dl>
       <h3 class="group-label">Spares</h3>
       {{if .Spares}}
       <ul class="part-grid">{{range .Spares}}{{template "spare_card" .}}{{end}}</ul>

@@ -2191,8 +2191,8 @@ legend.field-label {
   margin: 1rem 0 0;
 }
 
-.parts-main .group-label:first-child {
-  margin-top: 0;
+.parts-main .board-stats {
+  margin-bottom: 0.5rem;
 }
 
 .parts-root .none,
