@@ -31,7 +31,12 @@ func TestHeaderShowsSignInState(t *testing.T) {
 	rr = httptest.NewRecorder()
 	w.Render(rr, http.StatusOK, "landing.html", Page{User: &db.User{ID: 1, Username: "alice"}})
 	body := rr.Body.String()
-	for _, want := range []string{`class="nav-user">alice</a>`, `action="/logout"`, `href="/import"`} {
+	for _, want := range []string{
+		`class="nav-user">alice</span>`, `action="/logout"`, `href="/import"`,
+		// Your own pages are in the menu under your name; People is beside it.
+		`href="/people">People</a>`, `<details class="user-menu"`, `href="/machines">Machines</a>`,
+		`href="/parts">Parts</a>`, `href="/users/1">Your profile</a>`,
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("signed-in page missing %q", want)
 		}

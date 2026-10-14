@@ -297,7 +297,7 @@ func TestRenderTemplates(t *testing.T) {
 			rr := httptest.NewRecorder()
 			w.Render(rr, http.StatusOK, p.name, web.Page{User: user, Data: p.data})
 			assertStatus(t, rr, http.StatusOK)
-			assertContains(t, rr, "<!doctype html>", "</html>", `class="nav-user">alice</a>`)
+			assertContains(t, rr, "<!doctype html>", "</html>", `class="nav-user">alice</span>`)
 		})
 	}
 }

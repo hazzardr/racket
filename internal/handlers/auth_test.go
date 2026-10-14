@@ -44,7 +44,7 @@ func TestDevLogin(t *testing.T) {
 	alice := app.login("alice")
 	rr = app.get(alice, "/machines")
 	assertStatus(t, rr, http.StatusOK)
-	assertContains(t, rr, `class="nav-user">alice</a>`, "Log out")
+	assertContains(t, rr, `class="nav-user">alice</span>`, "Log out")
 
 	// The same name signs in as the same user.
 	app.login("Alice")
@@ -192,7 +192,7 @@ func TestDiscordCallback(t *testing.T) {
 			}
 			rr = app.get(session, "/machines")
 			assertStatus(t, rr, http.StatusOK)
-			assertContains(t, rr, `class="nav-user">alice</a>`)
+			assertContains(t, rr, `class="nav-user">alice</span>`)
 		})
 	}
 }

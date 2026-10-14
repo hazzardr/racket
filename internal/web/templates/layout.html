@@ -13,6 +13,7 @@
   <script src="/static/htmx.min.js" defer></script>
   <script src="/static/board.js" defer></script>
   <script src="/static/theme.js" defer></script>
+  <script src="/static/header.js" defer></script>
 </head>
 <body>
   <header class="header">
@@ -26,15 +27,28 @@
       </a>
       <nav class="nav">
         {{- if .User}}
-        <a href="/machines">Machines</a>
-        <a href="/parts">Parts</a>
         <a href="/people">People</a>
-        <a href="/machines/new">New Machine</a>
-        <a href="/import">Import</a>
-        <a href="/users/{{.User.ID}}" class="nav-user">{{.User.Username}}</a>
-        <form method="post" action="/logout" class="inline-form">
-          <button type="submit" class="btn-link">Log out</button>
-        </form>
+        {{/* Your own things live under your name. A plain <details>, so it
+             opens without JavaScript; header.js closes it on an outside
+             click or Escape. */}}
+        <details class="user-menu" data-user-menu>
+          <summary>
+            {{template "user_avatar" .User}}<span class="nav-user">{{.User.Username}}</span>
+            <svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
+          </summary>
+          <div class="menu">
+            <a href="/users/{{.User.ID}}">Your profile</a>
+            <a href="/machines">Machines</a>
+            <a href="/parts">Parts</a>
+            <hr>
+            <a href="/machines/new">New machine</a>
+            <a href="/import">Import from PCPartPicker</a>
+            <hr>
+            <form method="post" action="/logout">
+              <button type="submit">Log out</button>
+            </form>
+          </div>
+        </details>
         {{- else}}
         <a href="/login">Log in</a>
         {{- end}}

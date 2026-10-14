@@ -353,10 +353,103 @@ body {
   font-size: 0.75rem;
 }
 
-.nav-user,
-.nav a.nav-user {
+.nav-user {
   color: var(--color-text);
   font-size: 0.9375rem;
+}
+
+/* The signed-in user's menu: their avatar and name, opening onto their
+   own pages and actions. */
+.user-menu {
+  position: relative;
+}
+
+.user-menu summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.user-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.user-menu summary:hover,
+.user-menu[open] summary {
+  border-color: var(--line-2);
+  background: var(--board);
+}
+
+.user-menu summary .avatar {
+  width: 26px;
+  height: 26px;
+}
+
+.user-menu summary .avatar-initial {
+  font-size: 0.75rem;
+}
+
+.user-menu .chev {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--color-text-muted);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.2s;
+}
+
+.user-menu[open] .chev {
+  transform: rotate(180deg);
+}
+
+.user-menu .menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 70;
+  display: grid;
+  min-width: 14rem;
+  padding: 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--color-surface);
+  box-shadow: 0 18px 40px -12px var(--shadow);
+}
+
+.user-menu .menu a,
+.user-menu .menu button {
+  display: block;
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.9375rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.user-menu .menu a:hover,
+.user-menu .menu a:focus-visible,
+.user-menu .menu button:hover,
+.user-menu .menu button:focus-visible {
+  background: var(--board);
+}
+
+.user-menu hr {
+  margin: 4px 2px;
+  border: 0;
+  border-top: 1px solid var(--line);
 }
 
 .btn-link {
@@ -1216,8 +1309,8 @@ body {
 .chip.k-wanted { --st: var(--wanted); }
 .chip.k-borrowed { --st: var(--borrowed); }
 
-/* Wires: installed parts are dotted, unbought ones dashed, empty slots
-   faintly dotted. */
+/* Wires: installed parts are solid, borrowed ones dotted, unbought ones
+   dashed, empty slots faintly dotted. */
 
 .wire {
   transition: opacity 0.3s;
@@ -1247,6 +1340,25 @@ body {
   stroke: var(--c);
   stroke-width: 2.6;
   stroke-dasharray: 1.5 8.5;
+}
+
+/* An installed part's wire is one solid line. Its dots stay hidden (by
+   stroke-opacity, which the seat animation in board.js doesn't touch) and
+   only march along it, as light beads, while it's hovered or open. */
+.wire.k-owned .base {
+  stroke-width: 2.2;
+  opacity: 0.85;
+}
+
+.wire.k-owned .flow {
+  stroke: var(--board);
+  stroke-width: 1.6;
+  stroke-opacity: 0;
+  transition: stroke-opacity 0.3s;
+}
+
+.wire.k-owned:is(.is-hl, .is-open) .flow {
+  stroke-opacity: 0.9;
 }
 
 .wire.k-wanted .base {
