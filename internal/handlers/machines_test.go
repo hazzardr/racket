@@ -352,7 +352,8 @@ func TestFriendsCanViewButNotChange(t *testing.T) {
 	assertStatus(t, list, http.StatusOK)
 	assertContains(t, list, "alice-pc", "alice's · desktop")
 	// The card's slot lights: the filled first slot is lit, the rest dark.
-	assertContains(t, list, `<i class="k-owned" style="--type:#a78bfa" title="Motherboard">`, `<i class="k-empty" style="--type:#7aa7ff" title="CPU">`)
+	assertContains(t, list, `<i class="k-owned" style="--type:#a78bfa" title="Motherboard">`,
+		`<i class="k-empty" style="--type:#7aa7ff" title="CPU">`)
 	assertNotContains(t, list, "Delete</button>")
 
 	page := app.get(bob, machinePath(machineID, ""))
