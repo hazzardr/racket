@@ -90,6 +90,7 @@
         <div class="spares">
           {{range .Spares}}{{if .Mine}}{{template "spare_part" .}}{{end}}{{end}}
           {{if not .HasMine}}<p class="none">Nothing spare. Parts you take out of a slot land here.</p>{{end}}
+          <p class="none"><a href="/parts">Choose which spares friends can borrow</a></p>
         </div>
       </div>
       <div class="tray-group">

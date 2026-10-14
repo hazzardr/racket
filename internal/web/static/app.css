@@ -2169,3 +2169,120 @@ legend.field-label {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
+
+/* Parts page: the viewer's spares, as rows of the tray's parts, and what's
+   on loan. */
+
+.parts-root {
+  display: grid;
+  gap: 1.25rem;
+  padding-bottom: 3rem;
+}
+
+.parts-root .group-label {
+  margin-bottom: -0.5rem;
+}
+
+.parts-root .none {
+  color: var(--dim);
+  font-size: 0.875rem;
+}
+
+.inv-list {
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.inv {
+  --c: var(--tc, var(--dim));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--c) 30%, transparent);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+
+.inv .sp-port {
+  grid-row: auto;
+}
+
+.inv.k-wanted .sp-port {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--c);
+}
+
+.inv-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.inv-name {
+  font-weight: 550;
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.inv-meta {
+  font: 0.75rem/1.4 var(--mono);
+  color: var(--color-text-muted);
+}
+
+.inv-want {
+  margin-top: 3px;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+}
+
+.inv-want .chip {
+  margin-right: 4px;
+}
+
+.inv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.add-spare summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.add-spare[open] summary {
+  margin-bottom: 1rem;
+}
+
+.add-spare .form {
+  max-width: none;
+}
+
+.add-spare .checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+}
+
+.loans {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 600px) {
+  .inv {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .inv-actions {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}

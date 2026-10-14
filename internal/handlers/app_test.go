@@ -212,10 +212,13 @@ func (app *testApp) part(id int64) (db.Part, bool) {
 	return p, true
 }
 
-// sparePart creates a bought part in owner's inventory.
+// sparePart creates a bought part in owner's inventory that friends may
+// borrow.
 func (app *testApp) sparePart(owner db.User, name string) db.Part {
 	app.t.Helper()
-	p, err := app.queries.CreatePart(app.t.Context(), db.CreatePartParams{OwnerID: owner.ID, Status: "owned", Name: name})
+	p, err := app.queries.CreatePart(app.t.Context(), db.CreatePartParams{
+		OwnerID: owner.ID, Status: "owned", Name: name, Lendable: true,
+	})
 	if err != nil {
 		app.t.Fatal(err)
 	}

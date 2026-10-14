@@ -18,7 +18,7 @@ import (
 func TestAppRequiresLogin(t *testing.T) {
 	app := newTestApp(t)
 
-	for _, path := range []string{"/machines", "/machines/new", "/machines/1", "/import"} {
+	for _, path := range []string{"/machines", "/machines/new", "/machines/1", "/parts", "/import"} {
 		rr := app.get(nil, path)
 		assertStatus(t, rr, http.StatusSeeOther)
 		if loc := rr.Header().Get("Location"); loc != auth.LoginPath {

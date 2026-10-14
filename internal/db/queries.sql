@@ -146,9 +146,9 @@ ORDER BY machine_slots.machine_id, machine_slots.position, machine_slots.id;
 -- name: CreatePart :one
 INSERT INTO parts (
     owner_id, slot_id, status, name, category, manufacturer, model,
-    price_cents, purchased_from, source_url, price_checked_at
+    price_cents, purchased_from, source_url, price_checked_at, lendable
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
 -- name: ListPartsByOwner :many
@@ -156,20 +156,20 @@ SELECT * FROM parts WHERE owner_id = ? ORDER BY created_at DESC, id DESC;
 
 -- name: ListSpareParts :many
 -- Parts in no slot that the user could put in one of their machines: their
--- own (bought or not), and bought parts of members who haven't left.
+-- own (bought or not), and the bought parts members who haven't left lend.
 SELECT parts.id, parts.name, parts.category, parts.status, parts.price_cents,
        parts.owner_id, users.username AS owner_name
 FROM parts
 JOIN users ON users.id = parts.owner_id
 WHERE parts.slot_id IS NULL AND parts.status <> 'retired'
   AND users.deleted_at IS NULL
-  AND (parts.owner_id = sqlc.arg(user_id) OR parts.status = 'owned')
+  AND (parts.owner_id = sqlc.arg(user_id) OR (parts.status = 'owned' AND parts.lendable))
 ORDER BY users.username, parts.name, parts.id;
 
 -- name: AssignPartToSlot :execrows
 -- The caller must own the slot's machine. Their own parts can move freely;
--- another user's part must be owned (bought), not already in a slot, and
--- belong to someone who hasn't left.
+-- another user's part must be owned (bought), lendable, not already in a
+-- slot, and belong to someone who hasn't left.
 UPDATE parts SET slot_id = sqlc.arg(slot_id), updated_at = CURRENT_TIMESTAMP
 WHERE parts.id = sqlc.arg(part_id)
   AND EXISTS (
@@ -179,7 +179,7 @@ WHERE parts.id = sqlc.arg(part_id)
   AND (
     parts.owner_id = sqlc.arg(user_id)
     OR (
-      parts.status = 'owned' AND parts.slot_id IS NULL
+      parts.status = 'owned' AND parts.lendable AND parts.slot_id IS NULL
       AND EXISTS (SELECT 1 FROM users u WHERE u.id = parts.owner_id AND u.deleted_at IS NULL)
     )
   );
@@ -195,6 +195,65 @@ WHERE parts.id = sqlc.arg(part_id)
 
 -- name: DeletePart :execrows
 DELETE FROM parts WHERE id = ? AND owner_id = ?;
+
+-- name: DeleteSparePart :execrows
+-- Only a part in no slot, so deleting never empties a friend's machine.
+DELETE FROM parts WHERE id = ? AND owner_id = ? AND slot_id IS NULL;
+
+-- name: SetPartLendable :execrows
+-- Only bought parts can be lent. A part already on loan stays where it is.
+UPDATE parts SET lendable = sqlc.arg(lendable), updated_at = CURRENT_TIMESTAMP
+WHERE id = sqlc.arg(id) AND owner_id = sqlc.arg(user_id) AND status = 'owned';
+
+-- Lending -------------------------------------------------------------------
+
+-- name: ListSparesByOwner :many
+-- The user's parts in no slot, bought or not, for the parts page.
+SELECT * FROM parts
+WHERE owner_id = ? AND slot_id IS NULL AND status <> 'retired'
+ORDER BY lower(coalesce(category, '')), lower(name), id;
+
+-- name: ListSpareDemand :many
+-- Who wants the user's bought spares: members who haven't left with a
+-- not-yet-bought part of the same name in one of their machines. A machine
+-- that wants several (two RAM slots) is listed once.
+SELECT DISTINCT spare.id AS part_id, users.id AS user_id, users.username,
+       machines.id AS machine_id, machines.name AS machine_name
+FROM parts spare
+JOIN parts want ON lower(trim(want.name)) = lower(trim(spare.name))
+  AND want.status = 'wanted'
+JOIN machine_slots s ON s.id = want.slot_id
+JOIN machines ON machines.id = s.machine_id
+JOIN users ON users.id = machines.owner_id
+WHERE spare.owner_id = sqlc.arg(user_id) AND spare.slot_id IS NULL AND spare.status = 'owned'
+  AND machines.owner_id <> sqlc.arg(user_id) AND users.deleted_at IS NULL
+ORDER BY spare.id, users.username, machines.name;
+
+-- name: ListLentParts :many
+-- The user's parts in other users' machines, including machines of members
+-- who have left (the lender can still take those parts back).
+SELECT parts.id, parts.name, parts.category,
+       machines.id AS machine_id, machines.name AS machine_name,
+       users.username AS borrower_name, users.deleted_at AS borrower_left_at
+FROM parts
+JOIN machine_slots s ON s.id = parts.slot_id
+JOIN machines ON machines.id = s.machine_id
+JOIN users ON users.id = machines.owner_id
+WHERE parts.owner_id = sqlc.arg(user_id) AND machines.owner_id <> sqlc.arg(user_id)
+ORDER BY lower(users.username), lower(parts.name), parts.id;
+
+-- name: ListBorrowedParts :many
+-- Other users' parts in the user's machines, including parts lent by
+-- members who have left.
+SELECT parts.id, parts.name, parts.category,
+       machines.id AS machine_id, machines.name AS machine_name,
+       users.username AS lender_name, users.deleted_at AS lender_left_at
+FROM parts
+JOIN machine_slots s ON s.id = parts.slot_id
+JOIN machines ON machines.id = s.machine_id
+JOIN users ON users.id = parts.owner_id
+WHERE machines.owner_id = sqlc.arg(user_id) AND parts.owner_id <> sqlc.arg(user_id)
+ORDER BY lower(machines.name), s.position, s.id;
 
 -- name: MarkPartBought :execrows
 -- The owner bought a planned part. Its price becomes what they paid (or

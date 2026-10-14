@@ -1,0 +1,148 @@
+{{template "page_top" .}}
+  <section class="parts-page">
+    <div class="page-head">
+      <div>
+        <h2 class="page-title">Parts</h2>
+        <p class="page-lead">
+          Your spare parts, and what's on loan. Friends can put the spares you
+          lend into their machines, and give them back when they're done.
+        </p>
+      </div>
+    </div>
+    {{template "parts_board" .Data}}
+  </section>
+{{template "page_bottom" .}}
+
+{{/* The parts page body. Every parts action returns this whole fragment. */}}
+{{define "parts_board"}}
+<div id="parts-root" class="parts-root" hx-target="#parts-root" hx-swap="outerHTML">
+  <h3 class="group-label">Spares</h3>
+  {{if .Spares}}
+  <ul class="inv-list">{{range .Spares}}{{template "inventory_part" .}}{{end}}</ul>
+  {{else}}
+  <p class="none">Nothing spare. Parts you take out of a slot, or import without a machine, land here.</p>
+  {{end}}
+
+  <details class="panel add-spare"{{if .Form.Error}} open{{end}}>
+    <summary>Add a spare part</summary>
+    <form class="form" method="post" action="/parts" hx-post="/parts">
+      <label class="field">
+        <span class="field-label">Name</span>
+        <input name="name" type="text" value="{{.Form.Name}}" placeholder="AMD Ryzen 7 5700X 3.4 GHz 8-Core Processor" required>
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span class="field-label">Category</span>
+          <input name="category" type="text" value="{{.Form.Category}}" list="spare-cats" placeholder="CPU">
+        </label>
+        <label class="field">
+          <span class="field-label">Manufacturer</span>
+          <input name="manufacturer" type="text" value="{{.Form.Manufacturer}}">
+        </label>
+        <label class="field">
+          <span class="field-label">Model</span>
+          <input name="model" type="text" value="{{.Form.Model}}">
+        </label>
+        <label class="field">
+          <span class="field-label">Price</span>
+          <input name="price" type="text" value="{{.Form.Price}}" inputmode="decimal">
+        </label>
+      </div>
+      <datalist id="spare-cats">{{range .Cats}}<option value="{{.}}">{{end}}</datalist>
+      {{if .Form.Error}}<div class="status error" role="alert">{{.Form.Error}}</div>{{end}}
+      <div class="form-actions form-actions-split">
+        <span class="checks">
+          <label class="checkbox"><input name="lend" type="checkbox"{{if .Form.Lend}} checked{{end}}> Friends can borrow it</label>
+          <label class="checkbox"><input name="wanted" type="checkbox"{{if .Form.Wanted}} checked{{end}}> Not bought yet</label>
+        </span>
+        <button type="submit" class="btn btn-small">Add part</button>
+      </div>
+    </form>
+  </details>
+
+  <div class="loans">
+    <section class="panel">
+      <div class="panel-head">
+        <h3>Lent out</h3>
+        <p class="panel-note">Your parts in friends' machines.</p>
+      </div>
+      {{if .Lent}}
+      <ul class="inv-list">
+        {{range .Lent}}
+        <li class="inv k-borrowed" style="{{.Style}}">
+          <i class="sp-port"></i>
+          <div class="inv-main">
+            <span class="inv-name">{{.Name}}</span>
+            <span class="inv-meta">{{.Category}} · in {{if .Friend}}{{.Friend}}'s <a href="/machines/{{.MachineID}}">{{.MachineName}}</a>{{else}}a former member's {{.MachineName}}{{end}}</span>
+          </div>
+          <form method="post" action="/parts/{{.ID}}/return" class="inline-form inv-actions" hx-post="/parts/{{.ID}}/return">
+            <button type="submit" class="btn btn-small btn-secondary">Take back</button>
+          </form>
+        </li>
+        {{end}}
+      </ul>
+      {{else}}
+      <p class="none">Nothing lent out.</p>
+      {{end}}
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h3>Borrowed</h3>
+        <p class="panel-note">Friends' parts in your machines.</p>
+      </div>
+      {{if .Borrowed}}
+      <ul class="inv-list">
+        {{range .Borrowed}}
+        <li class="inv k-borrowed" style="{{.Style}}">
+          <i class="sp-port"></i>
+          <div class="inv-main">
+            <span class="inv-name">{{.Name}}</span>
+            <span class="inv-meta">{{.Category}} · from {{or .Friend "a former member"}}, in your <a href="/machines/{{.MachineID}}">{{.MachineName}}</a></span>
+          </div>
+          <form method="post" action="/parts/{{.ID}}/return" class="inline-form inv-actions" hx-post="/parts/{{.ID}}/return">
+            <button type="submit" class="btn btn-small btn-secondary">Give back</button>
+          </form>
+        </li>
+        {{end}}
+      </ul>
+      {{else}}
+      <p class="none">Nothing borrowed.</p>
+      {{end}}
+    </section>
+  </div>
+</div>
+{{end}}
+
+{{define "inventory_part"}}
+<li class="inv k-{{.State}}" style="{{.Style}}">
+  <i class="sp-port"></i>
+  <div class="inv-main">
+    <span class="inv-name">{{.Name}}</span>
+    <span class="inv-meta">{{.Category}} ·
+      {{- if eq .State "wanted"}} not bought{{if .PriceCents.Valid}}, ${{money .PriceCents.Int64}}{{end}}
+      {{- else if .PriceCents.Valid}} ${{money .PriceCents.Int64}}
+      {{- else}} no price{{end}}
+      {{- if .Manufacturer.Valid}} · {{.Manufacturer.String}}{{end}}
+      {{- if .Model.Valid}} · {{.Model.String}}{{end}}</span>
+    {{if .Wanters}}
+    <p class="inv-want">
+      <span class="chip k-wanted">{{.Friends}} {{if eq .Friends 1}}friend wants{{else}}friends want{{end}} this</span>
+      for {{range $i, $w := .Wanters}}{{if $i}}, {{end}}{{$w.UserName}}'s <a href="/machines/{{$w.MachineID}}">{{$w.MachineName}}</a>{{end}}
+    </p>
+    {{end}}
+  </div>
+  <div class="inv-actions">
+    {{if eq .Status "owned"}}
+    {{if .Lendable}}<span class="chip k-borrowed">friends can borrow</span>{{end}}
+    <form method="post" action="/parts/{{.ID}}/lend" class="inline-form" hx-post="/parts/{{.ID}}/lend">
+      <input type="hidden" name="lendable" value="{{if .Lendable}}0{{else}}1{{end}}">
+      <button type="submit" class="btn btn-small btn-secondary">{{if .Lendable}}Stop lending{{else}}Lend to friends{{end}}</button>
+    </form>
+    {{end}}
+    <form method="post" action="/parts/{{.ID}}/delete" class="inline-form"
+          hx-post="/parts/{{.ID}}/delete" hx-confirm="Delete {{.Name}}? This can't be undone.">
+      <button type="submit" class="btn-danger">Delete</button>
+    </form>
+  </div>
+</li>
+{{end}}

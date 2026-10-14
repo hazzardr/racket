@@ -270,6 +270,11 @@ func TestRenderTemplates(t *testing.T) {
 		{"login.html", loginPage{Discord: true, DevLogin: true}},
 		{"machines.html", machinesPage{Mine: []machineRow{{Mine: true}}, Others: []machineRow{{}}}},
 		{"new_machine.html", newMachinePage{Kinds: machineKinds, Statuses: machineStatuses}},
+		{"parts.html", partsPage{
+			Spares:   []inventoryPart{{Wanters: []wanter{{UserName: "bob"}}, Friends: 1}},
+			Lent:     []loanRow{{Friend: "bob"}},
+			Borrowed: []loanRow{{}},
+		}},
 		{"machine_detail.html", MachinePage{
 			IsOwner: true, Slots: board, Left: board, Spares: []sparePart{{Mine: true}}, HasMine: true,
 			Cats: []legendEntry{{Name: "CPU"}}, Counts: map[string]int{},
