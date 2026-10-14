@@ -57,6 +57,7 @@ type Part struct {
 	PriceCheckedAt      sql.NullTime
 	PreviousPriceCents  sql.NullInt64
 	MissingFromSourceAt sql.NullTime
+	Lendable            bool
 }
 
 type Rack struct {

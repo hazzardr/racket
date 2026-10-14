@@ -18,7 +18,9 @@ import (
 func TestAppRequiresLogin(t *testing.T) {
 	app := newTestApp(t)
 
-	for _, path := range []string{"/machines", "/machines/new", "/machines/1", "/import"} {
+	for _, path := range []string{
+		"/machines", "/machines/new", "/machines/1", "/parts", "/people", "/users/1", "/import",
+	} {
 		rr := app.get(nil, path)
 		assertStatus(t, rr, http.StatusSeeOther)
 		if loc := rr.Header().Get("Location"); loc != auth.LoginPath {
@@ -358,9 +360,12 @@ func TestFriendsCanViewButNotChange(t *testing.T) {
 
 	page := app.get(bob, machinePath(machineID, ""))
 	assertStatus(t, page, http.StatusOK)
-	assertContains(t, page, "B550", "alice's desktop")
+	assertContains(t, page, "B550", `>alice</a>'s desktop`,
+		`You're viewing <a href="/users/1">alice</a>'s machine. Only alice can add or change its parts.`,
+		"Only alice can add parts to alice-pc.", "Only alice can change the parts in alice-pc.")
 	assertNotContains(t, page, "Delete machine", "Add slot", `placeholder="Part name"`, "Remove slot",
-		">Take out<", ">Delete part<", "Spare parts")
+		">Take out<", ">Delete part<", "Spare parts", "take back")
+	assertNotContains(t, app.get(alice, machinePath(machineID, "")), "You're viewing", "Only alice can")
 
 	for _, attempt := range []struct {
 		path string

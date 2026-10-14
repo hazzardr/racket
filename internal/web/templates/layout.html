@@ -27,9 +27,11 @@
       <nav class="nav">
         {{- if .User}}
         <a href="/machines">Machines</a>
+        <a href="/parts">Parts</a>
+        <a href="/people">People</a>
         <a href="/machines/new">New Machine</a>
         <a href="/import">Import</a>
-        <span class="nav-user">{{.User.Username}}</span>
+        <a href="/users/{{.User.ID}}" class="nav-user">{{.User.Username}}</a>
         <form method="post" action="/logout" class="inline-form">
           <button type="submit" class="btn-link">Log out</button>
         </form>

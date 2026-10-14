@@ -50,6 +50,8 @@ Run `mise tasks` to list all tasks.
 - Everyone signed in can read everything. Writes are owner-only: check
   ownership in the handler, and also filter the write query on the acting
   user (see the `:execrows` queries in `internal/db/queries.sql`).
+- Friends can borrow only parts their owner marked `lendable`; the parts
+  page (`/parts`) manages spares and loans.
 - Users who leave are soft-deleted (`users.deleted_at`). Read queries hide
   their machines; parts they lent stay in friends' machines.
 

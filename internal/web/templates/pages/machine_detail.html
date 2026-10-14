@@ -5,13 +5,20 @@
       <div class="machine-title">
         <a href="/machines" class="back-link">&larr; Machines</a>
         <h2 class="section-title">{{.Machine.Name}}{{if ne .Machine.Status "active"}} <span class="badge">{{.Machine.Status}}</span>{{end}}</h2>
-        <p class="meta">{{if .IsOwner}}yours{{else}}{{.OwnerName}}'s{{end}} {{.Machine.Kind}}
+        <p class="meta">{{if .IsOwner}}yours{{else}}<a href="/users/{{.Machine.OwnerID}}">{{.OwnerName}}</a>'s{{end}} {{.Machine.Kind}}
           {{- if .Machine.FormFactor.Valid}} · {{.Machine.FormFactor.String}}{{end}}
           {{- if .Machine.Location.Valid}} · {{.Machine.Location.String}}{{end}}
           {{- if .Machine.BuiltOn.Valid}} · built {{.Machine.BuiltOn.Time.Format "2006-01-02"}}{{end}}
           {{- if .Machine.PurchasedOn.Valid}} · purchased {{.Machine.PurchasedOn.Time.Format "2006-01-02"}}{{end}}
         </p>
         {{if .Machine.Description.Valid}}<p class="description">{{.Machine.Description.String}}</p>{{end}}
+        {{if not .IsOwner}}
+        <p class="readonly-note">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          <span>You're viewing <a href="/users/{{.Machine.OwnerID}}">{{.OwnerName}}</a>'s machine. Only {{.OwnerName}} can add or change its parts.
+            {{- if .ViewerLent}} You can take back parts you lent them.{{end}}</span>
+        </p>
+        {{end}}
       </div>
       {{if .IsOwner}}
       <div class="machine-actions">

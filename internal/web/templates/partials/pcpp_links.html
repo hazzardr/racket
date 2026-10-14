@@ -1,0 +1,9 @@
+{{/* Links out to PCPartPicker. pcpp_find takes a part name; pcpp_list
+     takes the URL of the list a part was imported from. */}}
+{{define "pcpp_find" -}}
+<a href="{{pcppSearch .}}" target="_blank" rel="noopener noreferrer" class="external-link">find on PCPartPicker<span class="external-link-icon" aria-label="(opens in new tab)">&#8599;</span></a>
+{{- end}}
+
+{{define "pcpp_list" -}}
+<a href="{{.}}" target="_blank" rel="noopener noreferrer" class="external-link">its list<span class="external-link-icon" aria-label="(opens in new tab)">&#8599;</span></a>
+{{- end}}

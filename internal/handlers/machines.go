@@ -144,29 +144,42 @@ func (h *Handler) Landing(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-func (h *Handler) MachinesPage(w http.ResponseWriter, r *http.Request) {
-	machines, err := h.queries.ListMachines(r.Context())
+// machineRows lists every machine whose owner hasn't left, as the machine
+// list shows them to the viewer.
+func (h *Handler) machineRows(ctx context.Context, viewerID int64) ([]machineRow, error) {
+	machines, err := h.queries.ListMachines(ctx)
 	if err != nil {
-		h.serverError(w, r, err)
-		return
+		return nil, err
 	}
-	states, err := h.queries.ListSlotStates(r.Context())
+	states, err := h.queries.ListSlotStates(ctx)
 	if err != nil {
-		h.serverError(w, r, err)
-		return
+		return nil, err
 	}
 	leds := make(map[int64][]slotLED)
 	for _, s := range states {
 		leds[s.MachineID] = append(leds[s.MachineID], newSlotLED(s.Category, slotState(s.PartSource)))
 	}
-	var page machinesPage
-	for _, m := range machines {
+	rows := make([]machineRow, len(machines))
+	for i, m := range machines {
 		row := machineRow{ListMachinesRow: m, LEDs: leds[m.Machine.ID], Counts: map[string]int{}}
 		for _, led := range row.LEDs {
 			row.Counts[led.State]++
 		}
-		if m.Machine.OwnerID == viewer(r).ID {
-			row.Mine = true
+		row.Mine = m.Machine.OwnerID == viewerID
+		rows[i] = row
+	}
+	return rows, nil
+}
+
+func (h *Handler) MachinesPage(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.machineRows(r.Context(), viewer(r).ID)
+	if err != nil {
+		h.serverError(w, r, err)
+		return
+	}
+	var page machinesPage
+	for _, row := range rows {
+		if row.Mine {
 			page.Mine = append(page.Mine, row)
 		} else {
 			page.Others = append(page.Others, row)

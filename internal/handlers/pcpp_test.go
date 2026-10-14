@@ -174,3 +174,23 @@ func TestImport_NeedsOneSource(t *testing.T) {
 	assertStatus(t, rr, http.StatusBadRequest)
 	assertContains(t, rr, "not both")
 }
+
+// Parts link out to a PCPartPicker search for their name, and imported
+// parts to the list they came from.
+func TestPCPartPickerLinks(t *testing.T) {
+	app := newTestApp(t)
+	alice := app.login("alice")
+	assertStatus(t, app.post(alice, "/import", url.Values{
+		"pcpartpicker_text": {samplePaste}, "machine_name": {"test"},
+	}), http.StatusSeeOther)
+	app.sparePart(app.user("alice"), "Noctua NH-D15")
+
+	page := app.get(alice, machinePath(1, ""))
+	assertContains(t, page,
+		`href="https://pcpartpicker.com/search/?q=AMD&#43;Ryzen&#43;7&#43;9800X3D&#43;4.7&#43;GHz&#43;8-Core&#43;Processor"`,
+		`href="https://pcpartpicker.com/list/Kd3LPf" target="_blank"`)
+
+	parts := app.get(alice, partsPath)
+	assertContains(t, parts, `href="https://pcpartpicker.com/search/?q=Noctua&#43;NH-D15"`)
+	assertNotContains(t, parts, "its list")
+}

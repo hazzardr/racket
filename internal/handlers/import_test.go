@@ -242,8 +242,8 @@ func TestImportCSV_NoMachine(t *testing.T) {
 	csvData := "Type,Item,Price,Merchant\nCPU,Ryzen 7 5800X,$329.99,Amazon\n"
 	rr := app.postImport(alice, nil, []byte(csvData))
 	assertStatus(t, rr, http.StatusSeeOther)
-	if loc := rr.Header().Get("Location"); loc != "/machines" {
-		t.Fatalf("expected redirect to /machines, got %q", loc)
+	if loc := rr.Header().Get("Location"); loc != partsPath {
+		t.Fatalf("expected redirect to %s, got %q", partsPath, loc)
 	}
 	parts := app.ownedParts("alice")
 	if len(parts) != 1 || parts[0].SlotID.Valid {
@@ -270,6 +270,15 @@ func TestRenderTemplates(t *testing.T) {
 		{"login.html", loginPage{Discord: true, DevLogin: true}},
 		{"machines.html", machinesPage{Mine: []machineRow{{Mine: true}}, Others: []machineRow{{}}}},
 		{"new_machine.html", newMachinePage{Kinds: machineKinds, Statuses: machineStatuses}},
+		{"people.html", peoplePage{People: []db.ListMembersRow{{User: *user}}}},
+		{"profile.html", profilePage{
+			Member: *user, IsMe: true, Machines: []machineRow{{Mine: true}}, Lending: []inventoryPart{{}},
+		}},
+		{"parts.html", partsPage{
+			Spares:   []inventoryPart{{Wanters: []wanter{{UserName: "bob"}}, Friends: 1}},
+			Lent:     []loanRow{{Friend: "bob"}},
+			Borrowed: []loanRow{{}},
+		}},
 		{"machine_detail.html", MachinePage{
 			IsOwner: true, Slots: board, Left: board, Spares: []sparePart{{Mine: true}}, HasMine: true,
 			Cats: []legendEntry{{Name: "CPU"}}, Counts: map[string]int{},
@@ -281,7 +290,7 @@ func TestRenderTemplates(t *testing.T) {
 			rr := httptest.NewRecorder()
 			w.Render(rr, http.StatusOK, p.name, web.Page{User: user, Data: p.data})
 			assertStatus(t, rr, http.StatusOK)
-			assertContains(t, rr, "<!doctype html>", "</html>", `<span class="nav-user">alice</span>`)
+			assertContains(t, rr, "<!doctype html>", "</html>", `class="nav-user">alice</a>`)
 		})
 	}
 }

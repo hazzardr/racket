@@ -17,6 +17,7 @@
   {{- if .PriceDelta}} <span class="delta {{if .PriceDown}}down{{else}}up{{end}}" title="Change at the last price check">{{if .PriceDown}}&darr;{{else}}&uarr;{{end}} ${{money .PriceDelta}}</span>{{end}}
 {{- else}}${{money .PartPriceCents.Int64}}{{end}}
 {{- if .PartMissingFromSourceAt.Valid}} · <span class="missing">not on its list</span>{{end}}
+{{- with .Matches}} · <span class="match">{{with index . 0}}{{if .Mine}}you have one{{else}}{{.OwnerName}} has one{{end}}{{end}}</span>{{end}}
 {{- end}}
 
 {{define "slot_card"}}
@@ -43,10 +44,12 @@
   {{if .PartID.Valid}}
   <dl class="pn-dl">
     {{if .PartModel.Valid}}<dt>Model</dt><dd>{{.PartModel.String}}</dd>{{end}}
-    <dt>Owner</dt><dd>{{if eq .PartSource "former_member"}}a former member{{else}}{{.PartOwnerName.String}}{{end}}</dd>
+    <dt>Owner</dt><dd>{{if eq .PartSource "former_member"}}a former member{{else}}<a href="/users/{{.PartOwnerID.Int64}}">{{.PartOwnerName.String}}</a>{{end}}</dd>
     <dt>{{if eq .State "wanted"}}Estimate{{else}}Price{{end}}</dt>
     <dd>{{if .PartPriceCents.Valid}}${{money .PartPriceCents.Int64}}{{else}}none{{end}}</dd>
     {{if .PriceDelta}}<dt>Last check</dt><dd>{{if .PriceDown}}down{{else}}up{{end}} ${{money .PriceDelta}}</dd>{{end}}
+    <dt>Links</dt>
+    <dd>{{template "pcpp_find" .PartName.String}}{{if .PartSourceUrl.Valid}} · {{template "pcpp_list" .PartSourceUrl.String}}{{end}}</dd>
   </dl>
   {{if .PartMissingFromSourceAt.Valid}}
   <p class="pn-note">Not on its PCPartPicker list anymore (checked {{ago .PartMissingFromSourceAt.Time}}).</p>
@@ -59,10 +62,31 @@
     <div class="row"><button type="submit" class="btn btn-small btn-bought">Mark bought</button></div>
   </form>
   {{end}}
+  {{if .Matches}}
+  <div class="pn-section">
+    <h4>Instead of buying</h4>
+    {{$slot := .ID}}
+    {{range .Matches}}
+    <form class="fit" method="post" action="/slots/{{$slot}}/part/place" hx-post="/slots/{{$slot}}/part/place">
+      <input type="hidden" name="part_id" value="{{.PartID}}">
+      <input type="hidden" name="replace" value="1">
+      <span>{{if .Mine}}Your spare{{else}}{{.OwnerName}}'s spare{{end}}<small>{{if .Mine}}already bought{{else}}borrow it{{end}}</small></span>
+      <button type="submit" class="btn btn-small btn-secondary">{{if .Mine}}Use it{{else}}Borrow it{{end}}</button>
+    </form>
+    {{end}}
+    <p class="pn-note">The part you planned to buy comes off the list.</p>
+  </div>
+  {{end}}
   <div class="row">
     {{if .TakeOutLabel}}
     <form method="post" action="/slots/{{.ID}}/part/takeout" class="inline-form" hx-post="/slots/{{.ID}}/part/takeout">
       <button type="submit" class="btn btn-small btn-secondary">{{.TakeOutLabel}}</button>
+    </form>
+    {{end}}
+    {{if .CanLend}}
+    <form method="post" action="/slots/{{.ID}}/part/takeout" class="inline-form" hx-post="/slots/{{.ID}}/part/takeout">
+      <input type="hidden" name="lend" value="1">
+      <button type="submit" class="btn btn-small btn-secondary">Take out &amp; lend</button>
     </form>
     {{end}}
     {{if .CanDelete}}
@@ -77,7 +101,7 @@
     </form>
     {{end}}
   </div>
-  {{if .TakeOutLabel}}<p class="pn-note">Taking a part out puts it back in its owner's spares.</p>{{end}}
+  {{if .TakeOutLabel}}<p class="pn-note">Taking a part out puts it back in its owner's spares.{{if .CanLend}} Lend it and friends can borrow it from there.{{end}}</p>{{end}}
 
   {{else if .CanEdit}}
   {{if .Fits}}
@@ -105,7 +129,11 @@
     </form>
   </div>
   {{else}}
-  <p class="pn-note">Nothing in this slot yet.</p>
+  <p class="pn-note">Nothing in this slot yet. Only {{.OwnerName}} can add parts to {{.MachineName}}.</p>
+  {{end}}
+  {{if and .PartID.Valid (not .CanEdit)}}
+  <p class="pn-note">Only {{.OwnerName}} can change the parts in {{.MachineName}}.
+    {{- if .CanTakeBack}} This one is yours, so you can take it back.{{end}}</p>
   {{end}}
 
   {{if .CanEdit}}

@@ -12,7 +12,8 @@
 -- owner can write. Every write query filters on owner_id.
 --
 -- Borrowing: a machine owner may put another user's part in their slot, if
--- that part is 'owned' and not already in a slot. The part keeps its owner.
+-- that part is 'owned' and not already in a slot (and, since the lending
+-- migration, lendable). The part keeps its owner.
 -- Either the machine owner or the part owner can take it out again. The UI
 -- tells parts apart relative to the machine's owner:
 --   status = 'wanted'                  -> not purchased

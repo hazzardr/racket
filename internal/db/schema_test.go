@@ -34,9 +34,9 @@ const (
 	bobGPUSlot   int64 = 6
 	carolGPUSlot int64 = 7
 
-	aliceCPU        int64 = 10 // owned, not in a machine
+	aliceCPU        int64 = 10 // owned, not in a machine, not lent
 	aliceWantedPSU  int64 = 11 // not purchased
-	bobSpareGPU     int64 = 20 // owned, not in a machine
+	bobSpareGPU     int64 = 20 // owned, not in a machine, lendable
 	bobWantedCPU    int64 = 21 // not purchased
 	bobInstalledCPU int64 = 22 // owned, in Bob's machine
 )
@@ -50,12 +50,12 @@ INSERT INTO machine_slots (id, machine_id, category, position) VALUES
     (1, 1, 'GPU', 0), (2, 1, 'CPU', 1), (3, 1, 'RAM', 2), (4, 1, 'PSU', 3),
     (5, 2, 'CPU', 0), (6, 2, 'GPU', 1),
     (7, 3, 'GPU', 0);
-INSERT INTO parts (id, owner_id, slot_id, status, name) VALUES
-    (10, 1, NULL, 'owned',  'Ryzen 7 5700X'),
-    (11, 1, NULL, 'wanted', 'Corsair RM850x'),
-    (20, 2, NULL, 'owned',  'RTX 3080'),
-    (21, 2, NULL, 'wanted', 'Ryzen 7 9800X3D'),
-    (22, 2, 5,    'owned',  'Ryzen 5 7600');
+INSERT INTO parts (id, owner_id, slot_id, status, name, lendable) VALUES
+    (10, 1, NULL, 'owned',  'Ryzen 7 5700X',   FALSE),
+    (11, 1, NULL, 'wanted', 'Corsair RM850x',  FALSE),
+    (20, 2, NULL, 'owned',  'RTX 3080',        TRUE),
+    (21, 2, NULL, 'wanted', 'Ryzen 7 9800X3D', FALSE),
+    (22, 2, 5,    'owned',  'Ryzen 5 7600',    FALSE);
 `
 
 const (
@@ -253,6 +253,7 @@ func TestAssignPartToSlot(t *testing.T) {
 		{name: "own unpurchased part into own machine", user: alice, part: aliceWantedPSU, slot: alicePSUSlot, want: true},
 		{name: "borrow a friend's spare part", user: alice, part: bobSpareGPU, slot: aliceGPUSlot, want: true},
 		{name: "can't borrow a part nobody bought", user: alice, part: bobWantedCPU, slot: aliceCPUSlot},
+		{name: "can't borrow a spare its owner doesn't lend", user: bob, part: aliceCPU, slot: bobGPUSlot},
 		{name: "can't take a part out of a friend's machine", user: alice, part: bobInstalledCPU, slot: aliceCPUSlot},
 		{name: "can't put parts in a friend's machine", user: bob, part: bobSpareGPU, slot: aliceGPUSlot},
 		{

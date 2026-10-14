@@ -3,12 +3,14 @@ package web
 
 import (
 	"bytes"
+	"database/sql"
 	"embed"
 	"fmt"
 	"html/template"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +53,19 @@ var funcs = template.FuncMap{
 	},
 	"hasPrefix": strings.HasPrefix,
 	"ago":       ago,
+	"avatar":    avatar,
+	// pcppSearch is a PCPartPicker search for a part's name. Imported
+	// names are PCPartPicker's own, so the product is usually the first hit.
+	"pcppSearch": func(name string) string {
+		return "https://pcpartpicker.com/search/?q=" + url.QueryEscape(name)
+	},
+	// initial is the first letter of a name, for a user without an avatar.
+	"initial": func(name string) string {
+		for _, r := range name {
+			return strings.ToUpper(string(r))
+		}
+		return "?"
+	},
 	// percent is part/total as a whole percentage, 0 when total is 0.
 	"percent": func(part, total int64) int64 {
 		if total == 0 {
@@ -58,6 +73,22 @@ var funcs = template.FuncMap{
 		}
 		return part * 100 / total
 	},
+}
+
+// avatar is the URL of a user's Discord avatar: theirs if they set one,
+// else Discord's default for their account. It's "" for users who didn't
+// sign in with Discord (dev login).
+func avatar(discordID string, hash sql.NullString) string {
+	id, err := strconv.ParseUint(discordID, 10, 64)
+	if err != nil {
+		return ""
+	}
+	if hash.Valid && hash.String != "" {
+		return fmt.Sprintf("https://cdn.discordapp.com/avatars/%d/%s.png?size=128", id, url.PathEscape(hash.String))
+	}
+	// Accounts without an avatar get one of six defaults, picked from the
+	// snowflake's timestamp bits.
+	return fmt.Sprintf("https://cdn.discordapp.com/embed/avatars/%d.png", (id>>22)%6)
 }
 
 // agoToday is what ago says for anything in the last day.

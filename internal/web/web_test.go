@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"database/sql"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -30,7 +31,7 @@ func TestHeaderShowsSignInState(t *testing.T) {
 	rr = httptest.NewRecorder()
 	w.Render(rr, http.StatusOK, "landing.html", Page{User: &db.User{ID: 1, Username: "alice"}})
 	body := rr.Body.String()
-	for _, want := range []string{`<span class="nav-user">alice</span>`, `action="/logout"`, `href="/import"`} {
+	for _, want := range []string{`class="nav-user">alice</a>`, `action="/logout"`, `href="/import"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("signed-in page missing %q", want)
 		}
@@ -81,5 +82,40 @@ func TestAgo(t *testing.T) {
 		if got := ago(tt.t); got != tt.want {
 			t.Errorf("ago(now%+v) = %q, want %q", tt.t.Sub(now).Round(time.Hour), got, tt.want)
 		}
+	}
+}
+
+func TestAvatar(t *testing.T) {
+	tests := []struct {
+		name      string
+		discordID string
+		hash      sql.NullString
+		want      string
+	}{
+		{
+			name: "their own", discordID: "80351110224678912", hash: sql.NullString{String: "a1b2", Valid: true},
+			want: "https://cdn.discordapp.com/avatars/80351110224678912/a1b2.png?size=128",
+		},
+		{
+			name: "Discord's default", discordID: "80351110224678912",
+			want: "https://cdn.discordapp.com/embed/avatars/5.png",
+		},
+		{name: "dev login has none", discordID: "dev:alice", hash: sql.NullString{String: "a1b2", Valid: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := avatar(tt.discordID, tt.hash); got != tt.want {
+				t.Errorf("avatar = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPCPPSearch(t *testing.T) {
+	search := funcs["pcppSearch"].(func(string) string)
+	got := search("Corsair Vengeance RGB 32 GB (2 x 16 GB) DDR5-6000 & more")
+	want := "https://pcpartpicker.com/search/?q=Corsair+Vengeance+RGB+32+GB+%282+x+16+GB%29+DDR5-6000+%26+more"
+	if got != want {
+		t.Errorf("pcppSearch = %q, want %q", got, want)
 	}
 }
