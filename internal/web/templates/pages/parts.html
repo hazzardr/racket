@@ -185,6 +185,7 @@
 
 {{$filter := .Filter}}
 {{range .Groups}}
+<section class="friend-group">
 <h3 class="group-label">{{.Category}}</h3>
 <ul class="part-grid">
   {{range .Spares}}
@@ -206,7 +207,7 @@
     <form class="pcard-borrow" method="post" action="/parts/{{.ID}}/borrow" hx-post="/parts/{{.ID}}/borrow">
       <input type="hidden" name="cat" value="{{$filter}}">
       <select name="slot_id" aria-label="Slot to put {{.Name}} in">
-        {{range .Targets}}<option value="{{.SlotID}}">{{.MachineName}} · {{.Category}}{{if .Instead}}, instead of buying{{else}} (empty){{end}}</option>{{end}}
+        {{range .Targets}}<option value="{{.SlotID}}">{{.MachineName}} · {{.Category}}{{if .Instead}} (planned){{else}} (empty){{end}}</option>{{end}}
       </select>
       <button type="submit" class="btn btn-small btn-secondary">Borrow</button>
     </form>
@@ -216,6 +217,7 @@
   </li>
   {{end}}
 </ul>
+</section>
 {{else}}
 <div class="machine-empty">
   <span class="slot-cat">Empty shelf</span>

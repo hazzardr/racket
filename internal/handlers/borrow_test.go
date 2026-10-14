@@ -51,7 +51,7 @@ func TestFriendsTab(t *testing.T) {
 		"NVIDIA GeForce RTX 3080", "AMD Ryzen 5 7600", ">bob</a>'s",
 		"matches your plan", "Matches your <a href=\"/machines/2\">alice-plan</a> GPU",
 		// The plan's slot comes first, then the empty GPU slots.
-		`<option value="16">alice-plan · GPU, instead of buying</option><option value="7">alice-pc · GPU (empty)</option>`,
+		`<option value="16">alice-plan · GPU (planned)</option><option value="7">alice-pc · GPU (empty)</option>`,
 		`>CPU <span>1</span></a>`, `>GPU <span>1</span></a>`)
 	assertNotContains(t, rr, "Radeon RX 6600")
 

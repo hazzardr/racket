@@ -3,11 +3,13 @@
 :root {
   /* Colors follow the system's light or dark setting unless the viewer
      picks one (theme.js sets data-theme). Each token is
-     light-dark(light value, dark value). */
+     light-dark(light value, dark value). Light mode is a soft slate, not
+     white, so the color coding stands out without glare; its status and
+     label colors are deep enough for 3:1 contrast on every surface. */
   color-scheme: light dark;
-  --color-bg: light-dark(#f5f7fb, #070b14);
-  --color-surface: light-dark(#ffffff, #0e1628);
-  --color-border: light-dark(#d8dfeb, #1f2b43);
+  --color-bg: light-dark(#e6eaf0, #070b14);
+  --color-surface: light-dark(#f1f4f8, #0e1628);
+  --color-border: light-dark(#cbd3df, #1f2b43);
   --color-text: light-dark(#111827, #e6edf7);
   --color-text-muted: light-dark(#4b5870, #9aa8c2);
   --color-accent: light-dark(#2f66d8, #7aa7ff);
@@ -15,20 +17,20 @@
   --color-danger: light-dark(#d02f2f, #f87171);
 
   /* Machine board */
-  --board: light-dark(#edf1f7, #0a1020);
-  --bay: light-dark(#f7f9fc, #0b1222);
-  --chassis-top: light-dark(#ffffff, #111b31);
-  --glass: light-dark(rgba(255, 255, 255, 0.96), rgba(10, 15, 28, 0.92));
+  --board: light-dark(#dfe4ec, #0a1020);
+  --bay: light-dark(#edf1f6, #0b1222);
+  --chassis-top: light-dark(#f7f9fc, #111b31);
+  --glass: light-dark(rgba(241, 244, 248, 0.96), rgba(10, 15, 28, 0.92));
   --line: light-dark(rgba(30, 45, 80, 0.13), rgba(148, 163, 196, 0.13));
   --line-2: light-dark(rgba(30, 45, 80, 0.25), rgba(148, 163, 196, 0.26));
   --grid: light-dark(rgba(30, 45, 80, 0.13), rgba(148, 163, 196, 0.09));
   --vent: light-dark(rgba(30, 45, 80, 0.14), rgba(148, 163, 196, 0.16));
   --shadow: light-dark(rgba(15, 23, 42, 0.18), var(--shadow));
   --sheen: light-dark(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.04));
-  --dim: light-dark(#7a869c, #5f6d88);
-  --owned: light-dark(#15a34a, #4ade80);
+  --dim: light-dark(#66728a, #5f6d88);
+  --owned: light-dark(#12873e, #4ade80);
   --wanted: light-dark(#2f66d8, #8ab4ff);
-  --borrowed: light-dark(#e2620b, #fb923c);
+  --borrowed: light-dark(#c2530a, #fb923c);
   --empty: light-dark(#8b96aa, #5f6d88);
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
@@ -42,9 +44,29 @@
 }
 
 /* --tc is an element's part-type color (--type, from board.go), darkened
-   on light backgrounds, where the pastels would wash out. */
+   on light backgrounds, where the pastels would wash out. Setting only the
+   lightness keeps each type's hue and saturation, so the types stay
+   distinct, and gives every one 3:1 contrast on the light slate surfaces.
+   Browsers without relative colors mix toward slate instead. */
 [style*="--type"] {
-  --tc: light-dark(color-mix(in oklab, var(--type) 68%, #1e293b), var(--type));
+  --tc: light-dark(color-mix(in oklab, var(--type) 55%, #1e293b), var(--type));
+}
+
+@supports (color: oklch(from red l c h)) {
+  [style*="--type"] {
+    --tc: light-dark(oklch(from var(--type) 0.58 c h), var(--type));
+  }
+}
+
+/* Plain links in running text: names, machines, and "your parts page".
+   :where keeps this weaker than any component's own link styles (tabs). */
+main :where(a:not([class])) {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+main :where(a:not([class]):hover) {
+  text-decoration: underline;
 }
 
 * {
@@ -2298,6 +2320,15 @@ legend.field-label {
 
 .parts-root > .status.error {
   padding: 0;
+}
+
+.friend-group {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.friend-group .group-label {
+  margin: 0;
 }
 
 .pcard-borrow {
