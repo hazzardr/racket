@@ -108,6 +108,7 @@ SELECT machine_slots.id, machine_slots.machine_id, machine_slots.category,
        parts.previous_price_cents AS part_previous_price_cents,
        parts.price_checked_at AS part_price_checked_at,
        parts.missing_from_source_at AS part_missing_from_source_at,
+       parts.lendable AS part_lendable,
        CASE
          WHEN parts.id IS NULL THEN 'empty'
          WHEN parts.status = 'wanted' THEN 'unpurchased'
@@ -228,6 +229,21 @@ JOIN users ON users.id = machines.owner_id
 WHERE spare.owner_id = sqlc.arg(user_id) AND spare.slot_id IS NULL AND spare.status = 'owned'
   AND machines.owner_id <> sqlc.arg(user_id) AND users.deleted_at IS NULL
 ORDER BY spare.id, users.username, machines.name;
+
+-- name: ListSlotSpareMatches :many
+-- Spares that could stand in for the machine's not-yet-bought parts: the
+-- user's own bought spares and the spares members who haven't left lend,
+-- with the same name. Own spares come first.
+SELECT want.slot_id, spare.id AS part_id, spare.owner_id, users.username AS owner_name
+FROM parts want
+JOIN machine_slots s ON s.id = want.slot_id
+JOIN machines m ON m.id = s.machine_id
+JOIN parts spare ON lower(trim(spare.name)) = lower(trim(want.name))
+  AND spare.status = 'owned' AND spare.slot_id IS NULL
+JOIN users ON users.id = spare.owner_id AND users.deleted_at IS NULL
+WHERE s.machine_id = sqlc.arg(machine_id) AND want.status = 'wanted'
+  AND (spare.owner_id = sqlc.arg(user_id) OR spare.lendable)
+ORDER BY s.position, s.id, spare.owner_id <> m.owner_id, lower(users.username), spare.id;
 
 -- name: ListLentParts :many
 -- The user's parts in other users' machines, including machines of members

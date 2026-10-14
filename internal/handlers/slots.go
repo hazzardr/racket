@@ -192,7 +192,9 @@ func (h *Handler) DeleteSlot(w http.ResponseWriter, r *http.Request) {
 
 // PlacePart handles POST /slots/{id}/part/place (form field "part_id"): the
 // machine's owner puts a spare part in the slot, their own or a friend's.
-// A part already in the slot goes back to its owner's spares.
+// A part already in the slot goes back to its owner's spares, unless the
+// form has "replace" and it's the owner's part not bought yet: then the
+// spare stands in for it, and it's deleted.
 func (h *Handler) PlacePart(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		h.renderError(w, r, http.StatusBadRequest, "failed to parse form")
@@ -207,7 +209,7 @@ func (h *Handler) PlacePart(w http.ResponseWriter, r *http.Request) {
 		h.renderError(w, r, http.StatusBadRequest, "invalid part id")
 		return
 	}
-	placed, err := h.placePart(r.Context(), slot, partID, viewer(r).ID)
+	placed, err := h.placePart(r.Context(), slot, partID, viewer(r).ID, r.FormValue("replace") != "")
 	if err != nil {
 		h.serverError(w, r, err)
 		return
@@ -220,8 +222,9 @@ func (h *Handler) PlacePart(w http.ResponseWriter, r *http.Request) {
 }
 
 // placePart swaps the part into the slot in one transaction and reports
-// whether the user was allowed to.
-func (h *Handler) placePart(ctx context.Context, slot db.GetSlotRow, partID, userID int64) (bool, error) {
+// whether the user was allowed to. With replace, the user's own part not
+// bought yet that was in the slot is deleted instead of set aside.
+func (h *Handler) placePart(ctx context.Context, slot db.GetSlotRow, partID, userID int64, replace bool) (bool, error) {
 	tx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -240,7 +243,12 @@ func (h *Handler) placePart(ctx context.Context, slot db.GetSlotRow, partID, use
 		if row.PartID.Int64 == partID {
 			return true, nil
 		}
-		if _, err := q.UnassignPart(ctx, db.UnassignPartParams{PartID: row.PartID.Int64, UserID: userID}); err != nil {
+		if replace && row.PartStatus.String == partWanted && row.PartOwnerID.Int64 == userID {
+			_, err = q.DeletePart(ctx, db.DeletePartParams{ID: row.PartID.Int64, OwnerID: userID})
+		} else {
+			_, err = q.UnassignPart(ctx, db.UnassignPartParams{PartID: row.PartID.Int64, UserID: userID})
+		}
+		if err != nil {
 			return false, err
 		}
 	}
@@ -257,8 +265,13 @@ func (h *Handler) placePart(ctx context.Context, slot db.GetSlotRow, partID, use
 
 // TakeOutPart handles POST /slots/{id}/part/takeout: the machine's owner
 // takes the part out without deleting it. It goes back to its owner's
-// spares, so a borrowed part goes back to the friend who lent it.
+// spares, so a borrowed part goes back to the friend who lent it. With form
+// field "lend", the owner's own part also becomes lendable.
 func (h *Handler) TakeOutPart(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.renderError(w, r, http.StatusBadRequest, "failed to parse form")
+		return
+	}
 	slot, ok := h.ownSlot(w, r)
 	if !ok {
 		return
@@ -268,12 +281,25 @@ func (h *Handler) TakeOutPart(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	if row.PartID.Valid {
-		_, err = h.queries.UnassignPart(r.Context(), db.UnassignPartParams{PartID: row.PartID.Int64, UserID: viewer(r).ID})
+	if !row.PartID.Valid {
+		h.finishSlotAction(w, r, slot, boardNote{})
+		return
+	}
+	partID, userID := row.PartID.Int64, viewer(r).ID
+	if r.FormValue("lend") != "" && row.PartOwnerID.Int64 == userID {
+		n, err := h.queries.SetPartLendable(r.Context(), db.SetPartLendableParams{Lendable: true, ID: partID, UserID: userID})
 		if err != nil {
 			h.serverError(w, r, err)
 			return
 		}
+		if n == 0 {
+			h.finishSlotAction(w, r, slot, boardNote{err: "Only parts you've bought can be lent."})
+			return
+		}
+	}
+	if _, err = h.queries.UnassignPart(r.Context(), db.UnassignPartParams{PartID: partID, UserID: userID}); err != nil {
+		h.serverError(w, r, err)
+		return
 	}
 	h.finishSlotAction(w, r, slot, boardNote{})
 }

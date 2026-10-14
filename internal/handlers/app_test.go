@@ -272,3 +272,8 @@ func assertNotContains(t *testing.T, rr *httptest.ResponseRecorder, unwanted ...
 		}
 	}
 }
+
+// countOf counts the times s appears in the response body.
+func countOf(rr *httptest.ResponseRecorder, s string) int {
+	return strings.Count(rr.Body.String(), s)
+}

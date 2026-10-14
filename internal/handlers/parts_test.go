@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -170,7 +169,7 @@ func TestSpareDemand(t *testing.T) {
 		"2 friends want this",
 		`bob's <a href="/machines/2">bob-nas</a>, bob's <a href="/machines/1">bob-plan</a>`,
 		`carol's <a href="/machines/3">carol-plan</a>`)
-	if n := strings.Count(rr.Body.String(), "want this"); n != 1 {
+	if n := countOf(rr, "want this"); n != 1 {
 		t.Errorf(`"want this" shown %d times, want once (only the CPU is wanted)`, n)
 	}
 }

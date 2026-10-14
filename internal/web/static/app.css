@@ -1177,6 +1177,7 @@ body {
 .slot-meta .delta.down { color: var(--owned); }
 .slot-meta .delta.up { color: var(--color-danger); }
 .slot-meta .missing { color: var(--borrowed); }
+.slot-meta .match { color: var(--owned); }
 
 .chip {
   --st: var(--color-text-muted);

@@ -132,6 +132,12 @@ type slotCard struct {
 	CanDelete bool
 	// CanTakeBack: the viewer lent the part and may take it back.
 	CanTakeBack bool
+	// CanLend: the machine owner's own bought part, not lent yet, so they
+	// may take it out and lend it in one go.
+	CanLend bool
+	// Matches are spares with the name of a part the owner hasn't bought
+	// yet, theirs or friends', that could go in instead.
+	Matches []slotMatch
 	// PriceDelta is how much the last price refresh moved a not-yet-bought
 	// part's price (0 if it didn't); PriceDown says which way.
 	PriceDelta int64
@@ -170,6 +176,7 @@ func newSlotCard(row db.ListSlotsByMachineRow, viewerID, machineOwnerID int64) s
 	case card.CanEdit && ownsPart:
 		card.TakeOutLabel = "Take out"
 		card.CanDelete = true
+		card.CanLend = row.PartStatus.String == partOwned && !row.PartLendable.Bool
 	case card.CanEdit && row.PartSource == sourceBorrowed:
 		card.TakeOutLabel = "Give back to " + row.PartOwnerName.String
 	case card.CanEdit:
@@ -178,6 +185,13 @@ func newSlotCard(row db.ListSlotsByMachineRow, viewerID, machineOwnerID int64) s
 		card.CanTakeBack = true
 	}
 	return card
+}
+
+// slotMatch is a spare that could replace a part not bought yet.
+type slotMatch struct {
+	PartID    int64
+	OwnerName string
+	Mine      bool
 }
 
 // sparePart is a part in the tray: in no slot, and placeable in the
@@ -289,6 +303,11 @@ func (h *Handler) machineBoard(ctx context.Context, machine db.GetMachineRow, vi
 		page.tally(row, viewerID)
 	}
 	page.fitSpares()
+	if page.IsOwner {
+		if err := h.matchSpares(ctx, &page, viewerID); err != nil {
+			return MachinePage{}, err
+		}
+	}
 	half := (len(page.Slots) + 1) / 2
 	page.Left, page.Right = page.Slots[:half], page.Slots[half:]
 	return page, nil
@@ -333,6 +352,29 @@ func (page *MachinePage) fitSpares() {
 			}
 		}
 	}
+}
+
+// matchSpares offers each slot with a part the owner hasn't bought yet the
+// spares of the same name.
+func (h *Handler) matchSpares(ctx context.Context, page *MachinePage, viewerID int64) error {
+	rows, err := h.queries.ListSlotSpareMatches(ctx, db.ListSlotSpareMatchesParams{
+		MachineID: page.Machine.ID, UserID: viewerID,
+	})
+	if err != nil {
+		return err
+	}
+	matches := map[int64][]slotMatch{}
+	for _, m := range rows {
+		matches[m.SlotID.Int64] = append(matches[m.SlotID.Int64], slotMatch{
+			PartID: m.PartID, OwnerName: m.OwnerName, Mine: m.OwnerID == viewerID,
+		})
+	}
+	for i := range page.Slots {
+		if s := &page.Slots[i]; s.State == stateWanted && s.CanEdit {
+			s.Matches = matches[s.ID]
+		}
+	}
+	return nil
 }
 
 // boardNote is what a slot action tells the board it re-renders: an error

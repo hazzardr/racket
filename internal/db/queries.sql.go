@@ -728,6 +728,62 @@ func (q *Queries) ListRefreshableParts(ctx context.Context, arg ListRefreshableP
 	return items, nil
 }
 
+const listSlotSpareMatches = `-- name: ListSlotSpareMatches :many
+SELECT want.slot_id, spare.id AS part_id, spare.owner_id, users.username AS owner_name
+FROM parts want
+JOIN machine_slots s ON s.id = want.slot_id
+JOIN machines m ON m.id = s.machine_id
+JOIN parts spare ON lower(trim(spare.name)) = lower(trim(want.name))
+  AND spare.status = 'owned' AND spare.slot_id IS NULL
+JOIN users ON users.id = spare.owner_id AND users.deleted_at IS NULL
+WHERE s.machine_id = ?1 AND want.status = 'wanted'
+  AND (spare.owner_id = ?2 OR spare.lendable)
+ORDER BY s.position, s.id, spare.owner_id <> m.owner_id, lower(users.username), spare.id
+`
+
+type ListSlotSpareMatchesParams struct {
+	MachineID int64
+	UserID    int64
+}
+
+type ListSlotSpareMatchesRow struct {
+	SlotID    sql.NullInt64
+	PartID    int64
+	OwnerID   int64
+	OwnerName string
+}
+
+// Spares that could stand in for the machine's not-yet-bought parts: the
+// user's own bought spares and the spares members who haven't left lend,
+// with the same name. Own spares come first.
+func (q *Queries) ListSlotSpareMatches(ctx context.Context, arg ListSlotSpareMatchesParams) ([]ListSlotSpareMatchesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listSlotSpareMatches, arg.MachineID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSlotSpareMatchesRow
+	for rows.Next() {
+		var i ListSlotSpareMatchesRow
+		if err := rows.Scan(
+			&i.SlotID,
+			&i.PartID,
+			&i.OwnerID,
+			&i.OwnerName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSlotStates = `-- name: ListSlotStates :many
 SELECT machine_slots.machine_id, machine_slots.category,
        CASE
@@ -786,6 +842,7 @@ SELECT machine_slots.id, machine_slots.machine_id, machine_slots.category,
        parts.previous_price_cents AS part_previous_price_cents,
        parts.price_checked_at AS part_price_checked_at,
        parts.missing_from_source_at AS part_missing_from_source_at,
+       parts.lendable AS part_lendable,
        CASE
          WHEN parts.id IS NULL THEN 'empty'
          WHEN parts.status = 'wanted' THEN 'unpurchased'
@@ -816,6 +873,7 @@ type ListSlotsByMachineRow struct {
 	PartPreviousPriceCents  sql.NullInt64
 	PartPriceCheckedAt      sql.NullTime
 	PartMissingFromSourceAt sql.NullTime
+	PartLendable            sql.NullBool
 	PartSource              string
 }
 
@@ -845,6 +903,7 @@ func (q *Queries) ListSlotsByMachine(ctx context.Context, machineID int64) ([]Li
 			&i.PartPreviousPriceCents,
 			&i.PartPriceCheckedAt,
 			&i.PartMissingFromSourceAt,
+			&i.PartLendable,
 			&i.PartSource,
 		); err != nil {
 			return nil, err
