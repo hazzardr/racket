@@ -2,6 +2,7 @@ package auth
 
 import (
 	"database/sql"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -132,6 +133,42 @@ func TestSessionExpires(t *testing.T) {
 	s.now = func() time.Time { return start.Add(SessionTTL + time.Minute) }
 	if _, ok := whoami(s, c); ok {
 		t.Error("session outlived its TTL")
+	}
+}
+
+func TestStartPrunesExpiredSessions(t *testing.T) {
+	q := newTestQueries(t)
+	alice := newTestUser(t, q, "alice")
+	s := NewSessions(q, false)
+	start := time.Now()
+	s.now = func() time.Time { return start }
+
+	rr := httptest.NewRecorder()
+	if err := s.Start(t.Context(), rr, alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	old := sessionCookie(t, rr)
+	s.now = func() time.Time { return start.Add(SessionTTL + time.Minute) }
+	if err := s.Start(t.Context(), httptest.NewRecorder(), alice.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Looked up as of before it expired, the old row would still match.
+	_, err := q.GetSessionUser(t.Context(), db.GetSessionUserParams{TokenHash: hashToken(old.Value), Now: start.UTC()})
+	if !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("expired session lookup: err = %v, want it deleted", err)
+	}
+}
+
+func TestStaleSessionCookieCleared(t *testing.T) {
+	s := NewSessions(newTestQueries(t), false)
+	h := s.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: SessionCookie, Value: "stale"})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if c := sessionCookie(t, rr); c.MaxAge >= 0 || c.Value != "" {
+		t.Errorf("cookie = %+v, want a stale one cleared", c)
 	}
 }
 

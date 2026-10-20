@@ -16,6 +16,13 @@ ON CONFLICT (discord_id) DO UPDATE SET
     deleted_at = NULL
 RETURNING *;
 
+-- name: FindCurrentUsers :many
+-- Members who haven't left, by username or Discord ID, for removing one.
+-- Usernames aren't unique, so this can find more than one.
+SELECT * FROM users
+WHERE deleted_at IS NULL AND (username = sqlc.arg(who) OR discord_id = sqlc.arg(who))
+ORDER BY id;
+
 -- name: SoftDeleteUser :execrows
 UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL;
 
@@ -91,12 +98,13 @@ DELETE FROM machines WHERE id = ? AND owner_id = ?;
 -- Slots ---------------------------------------------------------------------
 
 -- name: CreateSlot :one
--- Appends a slot after the machine's existing ones.
+-- Appends a slot after the machine's existing ones. It inserts nothing
+-- (sql.ErrNoRows) unless the user owns the machine.
 INSERT INTO machine_slots (machine_id, category, position)
-VALUES (
+SELECT
     sqlc.arg(machine_id), sqlc.arg(category),
     (SELECT coalesce(max(position), -1) + 1 FROM machine_slots WHERE machine_id = sqlc.arg(machine_id))
-)
+WHERE EXISTS (SELECT 1 FROM machines WHERE id = sqlc.arg(machine_id) AND owner_id = sqlc.arg(user_id))
 RETURNING *;
 
 -- name: GetSlot :one
@@ -160,11 +168,21 @@ ORDER BY machine_slots.machine_id, machine_slots.position, machine_slots.id;
 -- Parts ---------------------------------------------------------------------
 
 -- name: CreatePart :one
+-- A part in a slot goes only into one of its owner's machines: otherwise
+-- it inserts nothing (sql.ErrNoRows).
 INSERT INTO parts (
     owner_id, slot_id, status, name, category, manufacturer, model,
     price_cents, purchased_from, source_url, price_checked_at, lendable
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+SELECT
+    sqlc.arg(owner_id), sqlc.narg(slot_id), sqlc.arg(status), sqlc.arg(name),
+    sqlc.narg(category), sqlc.narg(manufacturer), sqlc.narg(model),
+    sqlc.narg(price_cents), sqlc.narg(purchased_from), sqlc.narg(source_url),
+    sqlc.narg(price_checked_at), sqlc.arg(lendable)
+WHERE sqlc.narg(slot_id) IS NULL OR EXISTS (
+    SELECT 1 FROM machine_slots s JOIN machines m ON m.id = s.machine_id
+    WHERE s.id = sqlc.narg(slot_id) AND m.owner_id = sqlc.arg(owner_id)
+)
 RETURNING *;
 
 -- name: ListPartsByOwner :many
@@ -201,16 +219,19 @@ WHERE parts.id = sqlc.arg(part_id)
   );
 
 -- name: UnassignPart :execrows
--- Either the part's owner or the owner of the machine it sits in.
+-- Either the part's owner or the owner of the machine it sits in. With a
+-- slot_id, only while the part is still in that slot.
 UPDATE parts SET slot_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE parts.id = sqlc.arg(part_id)
+  AND (parts.slot_id = sqlc.narg(slot_id) OR sqlc.narg(slot_id) IS NULL)
   AND (parts.owner_id = sqlc.arg(user_id) OR parts.slot_id IN (
     SELECT s.id FROM machine_slots s JOIN machines m ON m.id = s.machine_id
     WHERE m.owner_id = sqlc.arg(user_id)
   ));
 
 -- name: DeletePart :execrows
-DELETE FROM parts WHERE id = ? AND owner_id = ?;
+-- Only while the part is still in the slot the caller saw it in.
+DELETE FROM parts WHERE id = ? AND owner_id = ? AND slot_id = ?;
 
 -- name: DeleteSparePart :execrows
 -- Only a part in no slot, so deleting never empties a friend's machine.
@@ -275,6 +296,15 @@ JOIN users ON users.id = parts.owner_id
 WHERE parts.owner_id <> sqlc.arg(user_id) AND users.deleted_at IS NULL
   AND parts.status = 'owned' AND parts.lendable AND parts.slot_id IS NULL
 ORDER BY lower(coalesce(parts.category, '')), lower(parts.name), lower(users.username), parts.id;
+
+-- name: GetFriendSpare :one
+-- One of the spares ListFriendSpares lists, for borrowing it.
+SELECT sqlc.embed(parts), users.username AS owner_name
+FROM parts
+JOIN users ON users.id = parts.owner_id
+WHERE parts.id = sqlc.arg(id)
+  AND parts.owner_id <> sqlc.arg(user_id) AND users.deleted_at IS NULL
+  AND parts.status = 'owned' AND parts.lendable AND parts.slot_id IS NULL;
 
 -- name: ListBorrowTargets :many
 -- The slots in the user's machines a borrowed part could go in: empty

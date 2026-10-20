@@ -23,8 +23,9 @@ const (
 	// SessionTTL is how long a sign-in lasts.
 	SessionTTL = 30 * 24 * time.Hour
 
-	// LoginPath is where signed-out visitors are sent.
-	LoginPath = "/login"
+	// LoginPath is where signed-out visitors are sent: the landing page,
+	// whose header has the sign-in buttons.
+	LoginPath = "/"
 )
 
 type userKey struct{}
@@ -51,6 +52,12 @@ type Sessions struct {
 // it whenever the app is served over HTTPS.
 func NewSessions(q *db.Queries, secure bool) *Sessions {
 	return &Sessions{q: q, secure: secure, now: time.Now}
+}
+
+// Secure reports whether cookies are HTTPS-only, for other cookies the app
+// sets beside the session's.
+func (s *Sessions) Secure() bool {
+	return s.secure
 }
 
 func hashToken(token string) []byte {
@@ -108,7 +115,8 @@ func (s *Sessions) End(w http.ResponseWriter, r *http.Request) error {
 }
 
 // Middleware loads the signed-in user, if any, into the request context.
-// Expired sessions and users who have left count as signed out.
+// Expired sessions and users who have left count as signed out, and their
+// cookie is cleared so later requests skip the lookup.
 func (s *Sessions) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(SessionCookie)
@@ -124,6 +132,7 @@ func (s *Sessions) Middleware(next http.Handler) http.Handler {
 		case err == nil:
 			r = r.WithContext(WithUser(r.Context(), u))
 		case errors.Is(err, sql.ErrNoRows):
+			http.SetCookie(w, s.cookie("", time.Unix(0, 0)))
 		default:
 			slog.ErrorContext(r.Context(), "load session", "error", err)
 		}
@@ -131,7 +140,7 @@ func (s *Sessions) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// RequireUser sends signed-out requests to the login page: a 303 for normal
+// RequireUser sends signed-out requests to LoginPath: a 303 for normal
 // requests, an Hx-Redirect for htmx ones.
 func RequireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

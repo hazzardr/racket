@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"time"
 
 	"golang.org/x/oauth2"
 )
@@ -21,6 +22,11 @@ const (
 	// maxDiscordBody caps a Discord API response; user and member objects
 	// are a few KB.
 	maxDiscordBody = 1 << 20
+
+	// identifyTimeout bounds the calls to Discord during sign-in. It stays
+	// under the server's 10s write timeout, so a hung Discord still gets
+	// the browser an error page.
+	identifyTimeout = 8 * time.Second
 )
 
 // ErrNotMember means the Discord user isn't in the configured server.
@@ -96,6 +102,8 @@ func (d *Discord) AuthCodeURL(state string) string {
 // Identify exchanges the callback's code for a token, then returns the
 // user's identity. It returns ErrNotMember if they aren't in the server.
 func (d *Discord) Identify(ctx context.Context, code string) (Identity, error) {
+	ctx, cancel := context.WithTimeout(ctx, identifyTimeout)
+	defer cancel()
 	tok, err := d.oauth.Exchange(ctx, code)
 	if err != nil {
 		return Identity{}, fmt.Errorf("exchange code: %w", err)

@@ -373,7 +373,7 @@ func TestSlotPartSourceLabels(t *testing.T) {
 
 func TestCreateSlotAppends(t *testing.T) {
 	_, q := newSeededDB(t)
-	slot, err := q.CreateSlot(t.Context(), db.CreateSlotParams{MachineID: aliceMachine, Category: "NIC"})
+	slot, err := q.CreateSlot(t.Context(), db.CreateSlotParams{MachineID: aliceMachine, Category: "NIC", UserID: alice})
 	if err != nil {
 		t.Fatal(err)
 	}

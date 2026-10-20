@@ -42,7 +42,8 @@ mise install
 ```
 
 Then start the server with dev login, which lets you sign in as any username
-without Discord:
+without Discord. It listens on 127.0.0.1 only, so other machines on your
+network can't sign in as you:
 
 ```bash
 mise run dev
@@ -103,7 +104,7 @@ from a release, and can rely on the following.
 
   | Variable | In production |
   |---|---|
-  | `RACKET_BASE_URL` | The public `https://` URL. Discord's callback is under it, and https makes cookies HTTPS-only |
+  | `RACKET_BASE_URL` | The public `https://` URL, with no path. Discord's callback is under it, and https makes cookies HTTPS-only |
   | `RACKET_DISCORD_CLIENT_ID`, `_CLIENT_SECRET`, `_GUILD_ID` | All three |
   | `RACKET_HOST` | `127.0.0.1` behind a reverse proxy or tunnel |
   | `PORT` | Default `8080` |
@@ -121,10 +122,16 @@ from a release, and can rely on the following.
 - **Migrations** run on startup and only go forward. An older release isn't
   guaranteed to work on a newer schema, so roll back by restoring a backup
   taken before the upgrade, not by installing the old binary alone.
-- **Logs** go to stderr: one line per request, plus app events.
-- **Stopping:** there's no graceful shutdown, so a stop or restart cuts off
-  requests in flight. Each SQLite transaction is atomic, so the database
-  can't be left half-written.
+- **Logs** go to stderr: one line per request (its path, without the
+  query), plus app events.
+- **Removing a member:** `racket remove-user <username or Discord ID>`, run
+  with the service's `RACKET_DB`, signs them out and hides their machines
+  and spares; parts they lent stay where they are. It's safe while the
+  server runs. Also remove them from the Discord server, or they can sign in
+  again.
+- **Stopping:** on SIGTERM or SIGINT the server stops taking requests and
+  gives those in flight up to 10 seconds to finish. Each SQLite transaction
+  is atomic, so even a hard kill can't leave the database half-written.
 
 ## Future Goals
 

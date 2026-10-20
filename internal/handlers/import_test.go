@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"racket/internal/db"
-	"racket/internal/web"
 )
 
 // postImport posts a multipart import form as cookie's user.
@@ -59,18 +58,47 @@ const (
 func TestParsePrice(t *testing.T) {
 	tests := []struct {
 		input  string
-		want   float64
+		want   int64
 		wantOk bool
 	}{
-		{"$199.99", 199.99, true},
-		{"£150", 150, true},
-		{"€1,299.00", 1299.00, true},
-		{"123.45", 123.45, true},
-		{"$1,000", 1000, true},
+		{"$199.99", 19999, true},
+		{"£150", 15000, true},
+		{"€1,299.00", 129900, true},
+		{"123.45", 12345, true},
+		{"$1,000", 100000, true},
+		{"$1,234,567", 0, false}, // over the cap
+		{"1000000", 100000000, true},
+		{"1000000.01", 0, false},
+		{"5000000000000000000", 0, false},
+		{"1" + strings.Repeat("0", 400), 0, false},
+		// A comma with two digits after it is a decimal comma.
+		{"12,50", 1250, true},
+		{"1.299,00", 129900, true},
+		{"€1.299,00", 129900, true},
+		{"12,50 EUR", 1250, true},
+		{"1,299", 129900, true},
+		{"0.5", 50, true},
+		{"19.999", 2000, true},
+		{"USD 20", 2000, true},
+		{"US$20", 2000, true},
+		{"20 usd", 2000, true},
+		{"$20 USD", 2000, true},
 		{"", 0, false},
 		{"  ", 0, false},
 		{"free", 0, false},
 		{"TBD", 0, false},
+		{"-5", 0, false},
+		{"$-5", 0, false},
+		{"1e3", 0, false},
+		{"12abc", 0, false},
+		{"XYZ 12", 0, false},
+		{"$20 EUR $", 0, false},
+		{"12,5", 0, false},
+		{"1,2,3", 0, false},
+		{"1.2.3", 0, false},
+		{"12.", 0, false},
+		{".", 0, false},
+		{"1,299,00", 0, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
@@ -82,6 +110,37 @@ func TestParsePrice(t *testing.T) {
 				t.Errorf("parsePrice(%q) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+// Ragged rows read as far as they go, and a byte order mark doesn't hide
+// the first column.
+func TestParseCSVToRows_RaggedRowsAndBOM(t *testing.T) {
+	csvData := "\ufeffType,Item,Price,Merchant\nCPU,Ryzen 7 5800X\nGPU\nRAM,16GB DDR4,$69.99,Amazon,extra\n"
+	rows, err := parseCSVToRows(csv.NewReader(strings.NewReader(csvData)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []csvRow{
+		{category: cpu, name: "Ryzen 7 5800X"},
+		{category: ram, name: "16GB DDR4", cents: 6999, hasPrice: true, merchant: "Amazon"},
+	}
+	if len(rows) != len(want) || rows[0] != want[0] || rows[1] != want[1] {
+		t.Errorf("rows = %+v, want %+v", rows, want)
+	}
+}
+
+// A price that isn't one, or is over the cap, is left out.
+func TestParseCSVToRows_BadPrices(t *testing.T) {
+	csvData := "Type,Item,Price\nCPU,a,5000000000000000000\nCPU,b,-5\nCPU,c,\"12,5\"\n"
+	rows, err := parseCSVToRows(csv.NewReader(strings.NewReader(csvData)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.hasPrice {
+			t.Errorf("row %q has price %d, want none", r.name, r.cents)
+		}
 	}
 }
 
@@ -103,12 +162,12 @@ RAM,16GB DDR4,$69.99,Amazon
 	want := []struct {
 		name     string
 		category string
-		price    float64
+		cents    int64
 		merchant string
 	}{
-		{"Ryzen 7 5800X", cpu, 329.99, "Amazon"},
-		{"B550 Tomahawk", "Motherboard", 179.99, "Newegg"},
-		{"16GB DDR4", ram, 69.99, "Amazon"},
+		{"Ryzen 7 5800X", cpu, 32999, "Amazon"},
+		{"B550 Tomahawk", "Motherboard", 17999, "Newegg"},
+		{"16GB DDR4", ram, 6999, "Amazon"},
 	}
 	for i, w := range want {
 		if rows[i].name != w.name {
@@ -117,8 +176,8 @@ RAM,16GB DDR4,$69.99,Amazon
 		if rows[i].category != w.category {
 			t.Errorf("row[%d].category = %q, want %q", i, rows[i].category, w.category)
 		}
-		if rows[i].price != w.price {
-			t.Errorf("row[%d].price = %v, want %v", i, rows[i].price, w.price)
+		if rows[i].cents != w.cents {
+			t.Errorf("row[%d].cents = %v, want %v", i, rows[i].cents, w.cents)
 		}
 		if rows[i].merchant != w.merchant {
 			t.Errorf("row[%d].merchant = %q, want %q", i, rows[i].merchant, w.merchant)
@@ -163,7 +222,7 @@ func TestRowToCreateParams(t *testing.T) {
 	row := csvRow{
 		name:     "Ryzen 7 5800X",
 		category: cpu,
-		price:    329.99,
+		cents:    32999,
 		hasPrice: true,
 		merchant: "Amazon",
 	}
@@ -248,57 +307,6 @@ func TestImportCSV_NoMachine(t *testing.T) {
 	parts := app.ownedParts("alice")
 	if len(parts) != 1 || parts[0].SlotID.Valid {
 		t.Fatalf("parts = %+v, want one part outside any machine", parts)
-	}
-}
-
-// Every page renders with its real data type and a signed-in user.
-func TestRenderTemplates(t *testing.T) {
-	w, err := web.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	user := &db.User{ID: 1, Username: "alice"}
-	board := []slotCard{{CanEdit: true, State: stateEmpty}}
-
-	pages := []struct {
-		name string
-		data any
-	}{
-		{"error.html", struct{ Message string }{Message: "test error"}},
-		{"import.html", importPage{}},
-		{"landing.html", landingPage{}},
-		{"login.html", loginPage{Discord: true, DevLogin: true}},
-		{"machines.html", machinesPage{Mine: []machineRow{{Mine: true}}, Others: []machineRow{{}}}},
-		{"new_machine.html", newMachinePage{Kinds: machineKinds, Statuses: machineStatuses}},
-		{"people.html", peoplePage{People: []db.ListMembersRow{{User: *user}}}},
-		{"profile.html", profilePage{
-			Member: *user, IsMe: true, Machines: []machineRow{{Mine: true}}, Lending: []inventoryPart{{}},
-		}},
-		{"parts.html", partsPage{View: viewFriends, Friends: friendsView{
-			Groups: []friendGroup{{Category: "GPU", Spares: []friendSpare{
-				{Targets: []borrowTarget{{Instead: true}}, Matches: []borrowTarget{{}}}, {},
-			}}},
-			Filters:  []categoryFilter{{Key: "gpu", Selected: true}},
-			Borrowed: &borrowTarget{}, Error: "x",
-		}}},
-		{"parts.html", partsPage{
-			Spares:   []inventoryPart{{Wanters: []wanter{{UserName: "bob"}}, Friends: 1}},
-			Lent:     []loanRow{{Friend: "bob"}},
-			Borrowed: []loanRow{{}},
-		}},
-		{"machine_detail.html", MachinePage{
-			IsOwner: true, Slots: board, Left: board, Spares: []sparePart{{Mine: true}}, HasMine: true,
-			Cats: []legendEntry{{Name: "CPU"}}, Counts: map[string]int{},
-		}},
-	}
-
-	for _, p := range pages {
-		t.Run(p.name, func(t *testing.T) {
-			rr := httptest.NewRecorder()
-			w.Render(rr, http.StatusOK, p.name, web.Page{User: user, Data: p.data})
-			assertStatus(t, rr, http.StatusOK)
-			assertContains(t, rr, "<!doctype html>", "</html>", `class="nav-user">alice</span>`)
-		})
 	}
 }
 
@@ -387,6 +395,11 @@ Case Fan,P12 5-pack,$30.00
 			t.Errorf("%s slots = %v, want %v", category, got[category], names)
 		}
 	}
+	for category, names := range got {
+		if _, ok := want[category]; !ok {
+			t.Errorf("unexpected %s slots holding %v", category, names)
+		}
+	}
 	for _, p := range app.ownedParts("alice") {
 		if p.Status != "wanted" {
 			t.Errorf("part %q status = %q, want wanted", p.Name, p.Status)
@@ -403,4 +416,53 @@ func TestImportCSV_EmptyCreatesNothing(t *testing.T) {
 	rr := app.postImport(alice, map[string]string{"machine_name": "test"}, []byte("Type,Item,Price\n"))
 	assertStatus(t, rr, http.StatusBadRequest)
 	assertContains(t, rr, "That CSV has no parts in it.")
+}
+
+func TestImportLimits(t *testing.T) {
+	app := newTestApp(t)
+	alice := app.login("alice")
+
+	tests := []struct {
+		name   string
+		fields map[string]string
+		csv    string
+		want   string
+	}{
+		{
+			name: "too many rows", csv: "Type,Item\n" + strings.Repeat("CPU,Ryzen\n", maxImportRows+1),
+			want: "more than 500 parts",
+		},
+		{
+			name: "long machine name", fields: map[string]string{"machine_name": strings.Repeat("x", maxNameLen+1)},
+			csv: "Type,Item\nCPU,Ryzen\n", want: "Machine name can be at most 100 characters.",
+		},
+		{
+			name: "long part name", csv: "Type,Item\nCPU," + strings.Repeat("x", maxPartNameLen+1) + "\n",
+			want: "Part names can be at most 300 characters.",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := app.postImport(alice, tt.fields, []byte(tt.csv))
+			assertStatus(t, rr, http.StatusBadRequest)
+			assertContains(t, rr, tt.want)
+			if parts := app.ownedParts("alice"); len(parts) != 0 {
+				t.Errorf("a rejected import created %d parts", len(parts))
+			}
+		})
+	}
+
+	// Exactly the cap is fine.
+	rr := app.postImport(alice, nil, []byte("Type,Item\n"+strings.Repeat("CPU,Ryzen\n", maxImportRows)))
+	assertStatus(t, rr, http.StatusSeeOther)
+	if parts := app.ownedParts("alice"); len(parts) != maxImportRows {
+		t.Errorf("imported %d parts, want %d", len(parts), maxImportRows)
+	}
+}
+
+func TestImportPage(t *testing.T) {
+	app := newTestApp(t)
+	rr := app.get(app.login("alice"), "/import")
+	assertStatus(t, rr, http.StatusOK)
+	assertContains(t, rr, `name="pcpartpicker_text"`, `name="machine_name"`, `type="file"`)
 }

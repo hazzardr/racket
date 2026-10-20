@@ -21,7 +21,7 @@
 {{- end}}
 
 {{define "slot_card"}}
-<button type="button" class="slot-card k-{{.State}}" id="slot-{{.ID}}" data-slot="{{.ID}}" data-cat="{{.Key}}" style="{{.Style}}" aria-haspopup="dialog">
+<button type="button" class="slot-card k-{{.State}}" id="slot-{{.ID}}" data-slot="{{.ID}}" data-cat="{{.Key}}" style="{{.Style}}" aria-expanded="false" aria-controls="slot-panel">
   <span class="slot-top"><span class="slot-cat">{{.Category}}</span>{{template "slot_chip" .}}</span>
   <span class="slot-name">{{if .PartID.Valid}}{{.PartName.String}}{{else}}Empty slot{{end}}</span>
   <span class="slot-meta">{{template "slot_meta" .}}</span>
@@ -138,7 +138,8 @@
 
   {{if .CanEdit}}
   <div class="pn-section">
-    <form method="post" action="/slots/{{.ID}}/delete" class="inline-form" hx-post="/slots/{{.ID}}/delete">
+    <form method="post" action="/slots/{{.ID}}/delete" class="inline-form" hx-post="/slots/{{.ID}}/delete"
+          hx-confirm="Remove this slot?{{if .PartID.Valid}} Its part comes out of the machine.{{end}}">
       <button type="submit" class="btn-danger">Remove slot</button>
     </form>
   </div>

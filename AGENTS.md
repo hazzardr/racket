@@ -46,21 +46,26 @@ Run `mise tasks` to list all tasks.
   `RequireUser` middleware, and the Discord OAuth2 client.
 - `internal/auth/authtest` fakes Discord for tests.
 - `handlers.(*Handler).Routes` is the whole route table. Everything except
-  `/healthz`, `/`, `/login`, `/logout`, `/auth/*`, and `/static` needs a
-  signed-in user.
+  `/healthz`, `/`, `/logout`, `/auth/*`, and `/static` needs a signed-in
+  user. Signed-out visitors land on `/`, whose header has the sign-in buttons.
 - Everyone signed in can read everything. Writes are owner-only: check
   ownership in the handler, and also filter the write query on the acting
   user (see the `:execrows` queries in `internal/db/queries.sql`).
 - Friends can borrow only parts their owner marked `lendable`; the parts
   page (`/parts`) manages spares and loans.
 - Users who leave are soft-deleted (`users.deleted_at`). Read queries hide
-  their machines; parts they lent stay in friends' machines.
+  their machines; parts they lent stay in friends' machines. The admin
+  command `racket remove-user WHO` (`cmd/server/admin.go`) does this and
+  ends their sessions; signing in again restores them.
 
 ## Conventions
 
 - The app stores handlers in `internal/handlers/`. They operate on `*db.Queries` and `*web.Web`.
 - Full pages render through `h.render`, which wraps the data in `web.Page`
-  (templates read `.User` and `.Data`). htmx fragments render bare.
+  (templates read `.User`, `.SignIn`, and `.Data`). htmx fragments render bare.
+- htmx doesn't swap in 4xx/5xx responses. For an expected failure (stale
+  data, bad input), re-render the fragment with a note and a 200. Anything
+  else shows as a toast (`internal/web/static/errors.js`).
 - The app stores HTML templates and static assets in `internal/web/`.
 - `internal/handlers/helpers.go` holds the helper functions that parse request values.
 

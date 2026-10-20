@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 	"time"
 
 	"racket/internal/db"
@@ -19,12 +18,12 @@ type sourceMatch struct {
 	row  *csvRow
 }
 
-// matchSourceRows finds each part's row on its list by type and name,
-// ignoring case. Each row matches at most one part, so a list with two of
-// the same SSD prices both.
+// matchSourceRows finds each part's row on its list by type and name, as
+// matchKey compares them. Each row matches at most one part, so a list with
+// two of the same SSD prices both.
 func matchSourceRows(parts []db.Part, rows []csvRow) []sourceMatch {
 	key := func(category, name string) string {
-		return strings.ToLower(strings.TrimSpace(category)) + "\x00" + strings.ToLower(strings.TrimSpace(name))
+		return matchKey(category) + "\x00" + matchKey(name)
 	}
 	available := map[string][]*csvRow{}
 	for i := range rows {
@@ -108,7 +107,7 @@ func (h *Handler) applyPriceMatches(ctx context.Context, userID int64, matches [
 		} else {
 			var price sql.NullInt64
 			if m.row.hasPrice {
-				price = sql.NullInt64{Int64: toCents(m.row.price), Valid: true}
+				price = sql.NullInt64{Int64: m.row.cents, Valid: true}
 			}
 			_, err = q.RefreshPartPrice(ctx, db.RefreshPartPriceParams{
 				PriceCents: price, CheckedAt: checkedAt, ID: m.part.ID, UserID: userID,
@@ -142,9 +141,10 @@ func (h *Handler) MarkPartBought(w http.ResponseWriter, r *http.Request) {
 		h.finishSlotAction(w, r, slot, boardNote{})
 		return
 	}
-	var price sql.NullInt64
-	if p, ok := parsePrice(r.FormValue("price")); ok {
-		price = sql.NullInt64{Int64: toCents(p), Valid: true}
+	price, ok := formPrice(r)
+	if !ok {
+		h.finishSlotAction(w, r, slot, boardNote{err: badPrice})
+		return
 	}
 	n, err := h.queries.MarkPartBought(r.Context(), db.MarkPartBoughtParams{
 		PriceCents: price, ID: row.PartID.Int64, UserID: viewer(r).ID,

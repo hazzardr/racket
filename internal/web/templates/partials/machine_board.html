@@ -38,6 +38,7 @@
         <input name="category" type="text" placeholder="Other slot" aria-label="Slot category" required>
         <button type="submit" class="add">Add</button>
       </form>
+      {{if .Error}}<p class="status error" role="alert">{{.Error}}</p>{{end}}
     </div>
     {{end}}
   </div>
@@ -104,7 +105,7 @@
   </section>
   {{end}}
 
-  <aside class="slot-panel" aria-label="Slot details" hidden>
+  <aside class="slot-panel" id="slot-panel" aria-label="Slot details" hidden>
     <button type="button" class="panel-close" aria-label="Close" data-panel-close>&times;</button>
     {{range .Slots}}{{template "slot_detail" .}}{{end}}
   </aside>

@@ -23,4 +23,6 @@
 
   form.addEventListener("input", update);
   form.addEventListener("change", update);
+  // The browser may restore field values on reload or Back.
+  update();
 })();

@@ -1,6 +1,6 @@
 {{template "page_top" .}}
   <section class="error-page">
-    <h2 class="section-title">Something went wrong</h2>
+    <h2 class="section-title">{{.Data.PageTitle}}</h2>
     <p class="status error">{{.Data.Message}}</p>
     <p><a href="/" class="btn-secondary">&larr; Back home</a></p>
   </section>

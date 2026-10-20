@@ -44,7 +44,7 @@ type categoryStyle struct {
 }
 
 // categoryStyles covers the default slots and PCPartPicker's part types,
-// keyed by categoryKey.
+// keyed by matchKey.
 //
 //nolint:goconst // bay codes; some match slot names by coincidence
 var categoryStyles = map[string]categoryStyle{
@@ -66,12 +66,8 @@ var categoryStyles = map[string]categoryStyle{
 // always gets the same one.
 var otherColors = []string{"#94a3b8", "#c084fc", "#67e8f9", "#fde68a", "#86efac", "#fda4af"}
 
-func categoryKey(category string) string {
-	return strings.ToLower(strings.TrimSpace(category))
-}
-
 func styleOf(category string) categoryStyle {
-	key := categoryKey(category)
+	key := matchKey(category)
 	if s, ok := categoryStyles[key]; ok {
 		return s
 	}
@@ -160,7 +156,7 @@ func newSlotCard(row db.ListSlotsByMachineRow, viewerID, machineOwnerID int64) s
 		ListSlotsByMachineRow: row,
 		State:                 slotState(row.PartSource),
 		Code:                  style.code,
-		Key:                   categoryKey(row.Category),
+		Key:                   matchKey(row.Category),
 		Style:                 typeStyle(row.Category),
 		CanEdit:               viewerID == machineOwnerID,
 	}
@@ -204,7 +200,7 @@ type sparePart struct {
 	db.ListSparePartsRow
 	Mine  bool
 	State string
-	// Category is the slot category the part fits, Key its categoryKey.
+	// Category is the slot category the part fits, Key its matchKey.
 	Category string
 	Key      string
 	Style    template.CSS
@@ -217,7 +213,7 @@ func newSparePart(row db.ListSparePartsRow, viewerID int64) sparePart {
 		Mine:              row.OwnerID == viewerID,
 		State:             stateOwned,
 		Category:          category,
-		Key:               categoryKey(category),
+		Key:               matchKey(category),
 		Style:             typeStyle(category),
 	}
 	switch {
@@ -274,6 +270,14 @@ type MachinePage struct {
 	// (zero if no part had a price).
 	PriceLists      []string
 	PricesCheckedAt time.Time
+	// Error is set when an action that isn't about one slot failed, like
+	// adding a slot.
+	Error string
+}
+
+// PageTitle is the machine's name.
+func (page MachinePage) PageTitle() string {
+	return page.Machine.Name
 }
 
 // machineBoard loads a machine's page data for the viewer.
@@ -325,7 +329,7 @@ func (h *Handler) machineBoard(ctx context.Context, machine db.GetMachineRow, vi
 // tally adds a slot to the page's totals and price lists.
 func (page *MachinePage) tally(row db.ListSlotsByMachineRow, viewerID int64) {
 	page.Counts[slotState(row.PartSource)]++
-	sameCategory := func(e legendEntry) bool { return categoryKey(e.Name) == categoryKey(row.Category) }
+	sameCategory := func(e legendEntry) bool { return matchKey(e.Name) == matchKey(row.Category) }
 	if !slices.ContainsFunc(page.Legend, sameCategory) {
 		page.Legend = append(page.Legend, legendEntry{Name: row.Category, Style: typeStyle(row.Category)})
 	}
@@ -387,7 +391,8 @@ func (h *Handler) matchSpares(ctx context.Context, page *MachinePage, viewerID i
 }
 
 // boardNote is what a slot action tells the board it re-renders: an error
-// to show in the slot's panel, or that a part just went into the slot.
+// to show in the slot's panel (or the board's, without a slot), or that a
+// part just went into the slot.
 type boardNote struct {
 	err    string
 	seated bool
@@ -395,7 +400,8 @@ type boardNote struct {
 
 // finishSlotAction ends a slot action: a 303 back to the machine for native
 // forms, or the re-rendered board for htmx. An error re-renders with 200 so
-// htmx swaps it in.
+// htmx swaps it in, or the whole page with a 422 for native forms. A slot
+// with ID 0 is the machine's board as a whole.
 func (h *Handler) finishSlotAction(w http.ResponseWriter, r *http.Request, slot db.GetSlotRow, note boardNote) {
 	if note.err == "" && redirectNative(w, r, fmt.Sprintf("%s/%d", machinesPath, slot.MachineID)) {
 		return
@@ -415,14 +421,21 @@ func (h *Handler) finishSlotAction(w http.ResponseWriter, r *http.Request, slot 
 		h.serverError(w, r, err)
 		return
 	}
-	for i := range page.Slots {
-		if page.Slots[i].ID == slot.ID && note.err != "" {
-			page.Slots[i].Error = note.err
-			page.Open = slot.ID
+	if note.err != "" {
+		page.Error = note.err
+		for i := range page.Slots {
+			if page.Slots[i].ID == slot.ID {
+				page.Slots[i].Error, page.Error = note.err, ""
+				page.Open = slot.ID
+			}
 		}
 	}
 	if note.seated {
 		page.Seated = slot.ID
+	}
+	if !isHX(r) {
+		h.render(w, r, http.StatusUnprocessableEntity, "machine_detail.html", page)
+		return
 	}
 	h.web.Fragment(w, "machine_board", page)
 }

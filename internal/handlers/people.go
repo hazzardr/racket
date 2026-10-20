@@ -55,6 +55,14 @@ type profilePage struct {
 	Lending  []inventoryPart
 }
 
+// PageTitle is the member's name, as the profile's heading shows it.
+func (p profilePage) PageTitle() string {
+	if p.Member.DisplayName.Valid && p.Member.DisplayName.String != "" {
+		return p.Member.DisplayName.String
+	}
+	return p.Member.Username
+}
+
 // ProfilePage renders GET /users/{id}.
 func (h *Handler) ProfilePage(w http.ResponseWriter, r *http.Request) {
 	id, err := parseID(r, "id")

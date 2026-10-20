@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"errors"
+	"net/http"
 	"testing"
 
 	"racket/internal/auth"
@@ -43,4 +44,18 @@ func TestDiscordIdentify(t *testing.T) {
 			t.Errorf("err = %v, want an API error", err)
 		}
 	})
+}
+
+// A failed membership check is an error, not "not a member".
+func TestDiscordIdentifyMembershipCheckFails(t *testing.T) {
+	fake := authtest.NewDiscord(t)
+	fake.AddUser("member-code", auth.Identity{ID: "1", Username: "alice"}, true)
+	d := auth.NewDiscord(fake.Config("http://racket.test/auth/discord/callback"))
+
+	for _, status := range []int{http.StatusTooManyRequests, http.StatusInternalServerError} {
+		fake.SetFailMember(status)
+		if _, err := d.Identify(t.Context(), "member-code"); err == nil || errors.Is(err, auth.ErrNotMember) {
+			t.Errorf("status %d: err = %v, want an API error, not ErrNotMember", status, err)
+		}
+	}
 }

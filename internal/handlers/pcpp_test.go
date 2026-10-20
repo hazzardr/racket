@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -38,12 +39,12 @@ func TestParsePCPPText(t *testing.T) {
 	want := map[int]csvRow{
 		0: {
 			category: cpu, name: "AMD Ryzen 7 9800X3D 4.7 GHz 8-Core Processor",
-			price: 444, hasPrice: true, merchant: "Amazon",
+			cents: 44400, hasPrice: true, merchant: "Amazon",
 		},
-		3: {category: "Memory", name: ramKit, price: 579.99, hasPrice: true, merchant: "Corsair"},
+		3: {category: "Memory", name: ramKit, cents: 57999, hasPrice: true, merchant: "Corsair"},
 		10: {
 			category: "Power Supply", name: "MSI MAG A750GL PCIE5 750 W 80+ Gold Certified Fully Modular ATX Power Supply",
-			price: 79.99, hasPrice: true, merchant: "Newegg",
+			cents: 7999, hasPrice: true, merchant: "Newegg",
 		},
 	}
 	for i, w := range want {
@@ -64,11 +65,11 @@ func TestParsePCPPText_Variants(t *testing.T) {
 		{"name ends in brackets, no price", "Memory: Corsair Vengeance 32 GB (2 x 16 GB)",
 			csvRow{category: "Memory", name: "Corsair Vengeance 32 GB (2 x 16 GB)"}},
 		{"purchased price", "Storage: Samsung 990 Pro 2 TB  (Purchased For $120.00)",
-			csvRow{category: "Storage", name: "Samsung 990 Pro 2 TB", price: 120, hasPrice: true}},
+			csvRow{category: "Storage", name: "Samsung 990 Pro 2 TB", cents: 12000, hasPrice: true}},
 		{"thousands separator", "Video Card: Radeon RX 9070 XT  ($1,049.99 @ Amazon)",
-			csvRow{category: "Video Card", name: "Radeon RX 9070 XT", price: 1049.99, hasPrice: true, merchant: "Amazon"}},
+			csvRow{category: "Video Card", name: "Radeon RX 9070 XT", cents: 104999, hasPrice: true, merchant: "Amazon"}},
 		{"regional currency", "CPU: Ryzen 5 7600  (£179.99 @ Scan)",
-			csvRow{category: cpu, name: "Ryzen 5 7600", price: 179.99, hasPrice: true, merchant: "Scan"}},
+			csvRow{category: cpu, name: "Ryzen 5 7600", cents: 17999, hasPrice: true, merchant: "Scan"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -193,4 +194,63 @@ func TestPCPartPickerLinks(t *testing.T) {
 	parts := app.get(alice, partsPath)
 	assertContains(t, parts, `href="https://pcpartpicker.com/search/?q=Noctua&#43;NH-D15"`)
 	assertNotContains(t, parts, "its list")
+}
+
+// Every spelling of a list's URL is the same list.
+func TestParsePCPPText_CanonicalURL(t *testing.T) {
+	for _, first := range []string{
+		"PCPartPicker Part List: https://pcpartpicker.com/list/Kd3LPf",
+		"PCPartPicker Part List: https://uk.pcpartpicker.com/list/Kd3LPf",
+		"PCPartPicker Part List: http://pcpartpicker.com/list/Kd3LPf/",
+		"PCPartPicker Part List: https://PCPartPicker.com/list/Kd3LPf?utm_source=x",
+		"PCPartPicker Part List: https://de.pcpartpicker.com/list/Kd3LPf#view",
+	} {
+		list := parsePCPPText(first + "\nCPU: Ryzen 5 7600")
+		if list.url != "https://pcpartpicker.com/list/Kd3LPf" {
+			t.Errorf("%q: url = %q, want the canonical list URL", first, list.url)
+		}
+	}
+	for _, first := range []string{
+		"PCPartPicker Part List: https://pcpartpicker.com/product/abc",
+		"PCPartPicker Part List: https://example.com/list/Kd3LPf",
+	} {
+		if list := parsePCPPText(first + "\nCPU: Ryzen 5 7600"); list.url != "" {
+			t.Errorf("%q: url = %q, want none (not a list)", first, list.url)
+		}
+	}
+}
+
+// Only PCPartPicker's part types are parts; other "Label: text" lines
+// someone left in the paste are skipped.
+func TestParsePCPPText_OnlyPartTypes(t *testing.T) {
+	list := parsePCPPText("Note: check cooler clearance\nCPU: Ryzen 5 7600\nTODO: buy thermal paste\n" +
+		"Thermal Compound: Arctic MX-4\nCustom: Cable extensions")
+	var got []string
+	for _, r := range list.rows {
+		got = append(got, r.category)
+	}
+	if strings.Join(got, "|") != "CPU|Thermal Compound|Custom" {
+		t.Errorf("part types = %v, want CPU, Thermal Compound, Custom", got)
+	}
+}
+
+// A price over the cap is no price.
+func TestParsePCPPText_HugePrice(t *testing.T) {
+	list := parsePCPPText("CPU: Ryzen 5 7600  ($50000000000000000.00 @ Amazon)")
+	if len(list.rows) != 1 || list.rows[0].hasPrice || list.rows[0].name != "Ryzen 5 7600" {
+		t.Errorf("rows = %+v, want the CPU with no price", list.rows)
+	}
+}
+
+// A regional copy of the list refreshes parts imported from the main site.
+func TestUpdatePrices_RegionalURL(t *testing.T) {
+	app := newTestApp(t)
+	alice := app.login("alice")
+	machineID := app.importPlanned(alice)
+	rr := app.updatePrices(alice, machineID, pcppPaste("https://uk.pcpartpicker.com/list/abc123/",
+		"CPU: Ryzen 7 9800X3D  ($419.00 @ Amazon)"))
+	assertStatus(t, rr, http.StatusSeeOther)
+	if cpu := app.partsNamed("alice", "Ryzen 7 9800X3D")[0]; cpu.PriceCents.Int64 != 41900 {
+		t.Errorf("CPU price = %v, want 41900", cpu.PriceCents)
+	}
 }

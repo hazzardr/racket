@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
-	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -36,14 +35,17 @@ var (
 	machineStatuses = []string{"planned", machineActive, "retired"}
 )
 
-// seedDefaultSlots creates the default slot categories for a new machine.
-// Failures are logged but not fatal (slots can be added manually later).
-func (h *Handler) seedDefaultSlots(ctx context.Context, q *db.Queries, machineID int64) {
+// seedDefaultSlots creates the default slot categories for the owner's new
+// machine. Run it in the transaction that created the machine, so a
+// machine never starts with only some of them.
+func seedDefaultSlots(ctx context.Context, q *db.Queries, ownerID, machineID int64) error {
 	for _, cat := range defaultSlots {
-		if _, err := q.CreateSlot(ctx, db.CreateSlotParams{MachineID: machineID, Category: cat}); err != nil {
-			slog.WarnContext(ctx, "failed to seed slot", "machine", machineID, "category", cat, "error", err)
+		_, err := q.CreateSlot(ctx, db.CreateSlotParams{MachineID: machineID, Category: cat, UserID: ownerID})
+		if err != nil {
+			return fmt.Errorf("seed %s slot: %w", cat, err)
 		}
 	}
+	return nil
 }
 
 // machinesPage is the machine list page data: the viewer's machines, then
@@ -118,7 +120,7 @@ type importDemo struct {
 	Slots     []string
 	SlotMap   map[string]string
 	OtherSlot string
-	// Styles is keyed by categoryKey.
+	// Styles is keyed by matchKey.
 	Styles map[string]demoStyle
 }
 
@@ -135,7 +137,7 @@ func (h *Handler) Landing(w http.ResponseWriter, r *http.Request) {
 		styles[key] = demoStyle{Code: s.code, Color: s.color}
 	}
 	other := styleOf(otherSlot)
-	styles[categoryKey(otherSlot)] = demoStyle{Code: other.code, Color: other.color}
+	styles[matchKey(otherSlot)] = demoStyle{Code: other.code, Color: other.color}
 	h.render(w, r, http.StatusOK, "landing.html", landingPage{Demo: importDemo{
 		Slots:     defaultSlots,
 		SlotMap:   pcppSlotCategories,
@@ -263,8 +265,10 @@ func (h *Handler) CreateMachine(w http.ResponseWriter, r *http.Request) {
 	}
 	page.Description = strings.TrimSpace(r.FormValue("description"))
 	page.Location = strings.TrimSpace(r.FormValue("location"))
-	page.BuiltOn = r.FormValue("built_on")
-	page.PurchasedOn = r.FormValue("purchased_on")
+	page.BuiltOn = strings.TrimSpace(r.FormValue("built_on"))
+	page.PurchasedOn = strings.TrimSpace(r.FormValue("purchased_on"))
+	builtOn, builtOK := parseDate(page.BuiltOn)
+	purchasedOn, purchasedOK := parseDate(page.PurchasedOn)
 	switch {
 	case page.Name == "":
 		page.Error = "Name is required."
@@ -272,21 +276,29 @@ func (h *Handler) CreateMachine(w http.ResponseWriter, r *http.Request) {
 		page.Error = "Pick a kind from the list."
 	case !slices.Contains(machineStatuses, page.Status):
 		page.Error = "Pick a status from the list."
+	case !builtOK || !purchasedOK:
+		page.Error = "Dates should look like 2026-10-20."
+	default:
+		page.Error = tooLong(
+			textField{"Name", page.Name, maxNameLen},
+			textField{"Description", page.Description, maxDescriptionLen},
+			textField{"Location", page.Location, maxLocationLen},
+		)
 	}
 	if page.Error != "" {
 		h.render(w, r, http.StatusUnprocessableEntity, "new_machine.html", page)
 		return
 	}
 
-	machine, err := h.queries.CreateMachine(r.Context(), db.CreateMachineParams{
+	id, err := h.createMachine(r.Context(), db.CreateMachineParams{
 		OwnerID:     viewer(r).ID,
 		Name:        page.Name,
 		Kind:        page.Kind,
 		Status:      page.Status,
 		Description: optionalString(page.Description),
 		Location:    optionalString(page.Location),
-		BuiltOn:     parseDate(page.BuiltOn),
-		PurchasedOn: parseDate(page.PurchasedOn),
+		BuiltOn:     builtOn,
+		PurchasedOn: purchasedOn,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -297,9 +309,27 @@ func (h *Handler) CreateMachine(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	h.seedDefaultSlots(r.Context(), h.queries, machine.ID)
 
-	redirectNativeOrHX(w, r, fmt.Sprintf("%s/%d", machinesPath, machine.ID))
+	redirectNativeOrHX(w, r, fmt.Sprintf("%s/%d", machinesPath, id))
+}
+
+// createMachine creates the machine with its default slots, in one
+// transaction, and returns its ID.
+func (h *Handler) createMachine(ctx context.Context, p db.CreateMachineParams) (int64, error) {
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := h.queries.WithTx(tx)
+	machine, err := q.CreateMachine(ctx, p)
+	if err != nil {
+		return 0, err
+	}
+	if err := seedDefaultSlots(ctx, q, p.OwnerID, machine.ID); err != nil {
+		return 0, err
+	}
+	return machine.ID, tx.Commit()
 }
 
 // DeleteMachine handles POST /machines/{id}/delete and redirects to the list.
