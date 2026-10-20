@@ -160,13 +160,23 @@ func TestLoadConfig(t *testing.T) {
 			wantErr: "RACKET_DEV_LOGIN",
 		},
 		{
+			name: "listen host and client IP header",
+			env:  with(discord, "RACKET_HOST", "127.0.0.1", "RACKET_CLIENT_IP_HEADER", "Cf-Connecting-IP"),
+			check: func(t *testing.T, cfg config) {
+				t.Helper()
+				if cfg.host != "127.0.0.1" || cfg.clientIPHeader != "Cf-Connecting-IP" {
+					t.Errorf("host = %q, clientIPHeader = %q", cfg.host, cfg.clientIPHeader)
+				}
+			},
+		},
+		{
 			name:    "base URL without a scheme",
 			env:     with(discord, "RACKET_BASE_URL", "racket.example.com"),
 			wantErr: "RACKET_BASE_URL",
 		},
 	}
 	vars := []string{
-		"RACKET_DB", "PORT", "RACKET_BASE_URL", "RACKET_DEV_LOGIN",
+		"RACKET_DB", "RACKET_HOST", "PORT", "RACKET_BASE_URL", "RACKET_DEV_LOGIN", "RACKET_CLIENT_IP_HEADER",
 		"RACKET_DISCORD_CLIENT_ID", "RACKET_DISCORD_CLIENT_SECRET", "RACKET_DISCORD_GUILD_ID",
 	}
 	for _, tt := range tests {
@@ -182,6 +192,41 @@ func TestLoadConfig(t *testing.T) {
 				t.Fatalf("err = %v, want it to mention %q", err, tt.wantErr)
 			case tt.check != nil:
 				tt.check(t, cfg)
+			}
+		})
+	}
+}
+
+func TestClientIP(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string // the configured header name
+		value  string // what the request sends in Cf-Connecting-IP
+		want   string
+	}{
+		{"header used", "Cf-Connecting-IP", "203.0.113.7", "203.0.113.7"},
+		{"IPv6", "Cf-Connecting-IP", "2001:db8::1", "2001:db8::1"},
+		{"IPv4-mapped IPv6", "Cf-Connecting-IP", "::ffff:203.0.113.7", "203.0.113.7"},
+		{"not an IP", "Cf-Connecting-IP", "evil, 1.2.3.4", "192.0.2.1:1234"},
+		{"header missing", "Cf-Connecting-IP", "", "192.0.2.1:1234"},
+		{"no header configured", "", "203.0.113.7", "192.0.2.1:1234"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			h := clientIP(tt.header, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				got = r.RemoteAddr
+			}))
+			req := httptest.NewRequest(http.MethodGet, "http://racket.test/", nil)
+			req.RemoteAddr = "192.0.2.1:1234"
+			// A header the server wasn't told to trust changes nothing.
+			req.Header.Set("X-Forwarded-For", "198.51.100.9")
+			if tt.value != "" {
+				req.Header.Set("Cf-Connecting-Ip", tt.value) // canonical form of the configured name
+			}
+			h.ServeHTTP(httptest.NewRecorder(), req)
+			if got != tt.want {
+				t.Errorf("RemoteAddr = %q, want %q", got, tt.want)
 			}
 		})
 	}
