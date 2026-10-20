@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -57,9 +59,14 @@ const schemeHTTPS = "https"
 
 // config is the server configuration, read from the environment.
 type config struct {
-	dbPath  string
+	dbPath string
+	// host is the address to listen on; empty means every interface.
+	host    string
 	port    string
 	baseURL *url.URL
+	// clientIPHeader names the request header that holds the client's
+	// address, set by a reverse proxy; empty means use the connection's.
+	clientIPHeader string
 	// discord is nil when Discord sign-in isn't configured.
 	discord  *auth.DiscordConfig
 	devLogin bool
@@ -76,9 +83,11 @@ func getenv(key, fallback string) string {
 // set up: Discord, or dev login for local development.
 func loadConfig() (config, error) {
 	cfg := config{
-		dbPath:   getenv("RACKET_DB", "racket.db"),
-		port:     getenv("PORT", "8080"),
-		devLogin: os.Getenv("RACKET_DEV_LOGIN") == "1",
+		dbPath:         getenv("RACKET_DB", "racket.db"),
+		host:           os.Getenv("RACKET_HOST"),
+		port:           getenv("PORT", "8080"),
+		clientIPHeader: os.Getenv("RACKET_CLIENT_IP_HEADER"),
+		devLogin:       os.Getenv("RACKET_DEV_LOGIN") == "1",
 	}
 
 	rawBase := strings.TrimSuffix(getenv("RACKET_BASE_URL", "http://localhost:"+cfg.port), "/")
@@ -169,18 +178,35 @@ func run() error {
 	}
 
 	server := &http.Server{
-		Addr:         ":" + cfg.port,
-		Handler:      middleware.Logger(h.Routes()),
+		Addr:         net.JoinHostPort(cfg.host, cfg.port),
+		Handler:      clientIP(cfg.clientIPHeader, middleware.Logger(h.Routes())),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
 
-	slog.Info("racket listening", "addr", "http://localhost:"+cfg.port, "base_url", cfg.baseURL.String())
+	slog.Info("racket listening", "addr", server.Addr, "base_url", cfg.baseURL.String())
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("server error: %w", err)
 	}
 	return nil
+}
+
+// clientIP sets r.RemoteAddr from the header a reverse proxy puts the
+// client's address in (Cloudflare's Cf-Connecting-IP), so the request log
+// shows the client instead of the proxy. Trust only a header the proxy always
+// overwrites, on a server only the proxy can reach: anyone else can send it.
+// Without a header name, or with a value that isn't an IP, RemoteAddr stays.
+func clientIP(header string, next http.Handler) http.Handler {
+	if header == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ip, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get(header))); err == nil {
+			r.RemoteAddr = ip.Unmap().String()
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // newHandler wires the handlers to the database, templates, and sign-in.

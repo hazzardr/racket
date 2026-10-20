@@ -46,7 +46,8 @@ Run `mise tasks` to list all tasks.
   `RequireUser` middleware, and the Discord OAuth2 client.
 - `internal/auth/authtest` fakes Discord for tests.
 - `handlers.(*Handler).Routes` is the whole route table. Everything except
-  `/`, `/login`, `/logout`, `/auth/*`, and `/static` needs a signed-in user.
+  `/healthz`, `/`, `/login`, `/logout`, `/auth/*`, and `/static` needs a
+  signed-in user.
 - Everyone signed in can read everything. Writes are owner-only: check
   ownership in the handler, and also filter the write query on the acting
   user (see the `:execrows` queries in `internal/db/queries.sql`).
@@ -67,5 +68,9 @@ Run `mise tasks` to list all tasks.
 
 - CI runs on the local Forgejo instance (`code.brihome.me`) via `.forgejo/workflows/`.
 - GoReleaser publishes releases to the local Forgejo instance.
+- The README's "Deploying" section is the deploy contract that the `hosted`
+  repo's Ansible relies on: release asset names, environment variables, the
+  listen address, `/healthz`, the data path, and migrations. Update it in the
+  same change as any of those.
 - The git repository is a push mirror to Codeberg for public access.
 - CI pulls container images from Docker Hub, not ghcr.

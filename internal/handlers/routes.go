@@ -9,8 +9,8 @@ import (
 	"racket/internal/auth"
 )
 
-// Routes returns the app's router. Everything except the landing page, sign
-// in and out, and static assets needs a signed-in user.
+// Routes returns the app's router. Everything except the health check, the
+// landing page, sign in and out, and static assets needs a signed-in user.
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
@@ -19,6 +19,7 @@ func (h *Handler) Routes() http.Handler {
 	r.Use(http.NewCrossOriginProtection().Handler)
 	r.Use(h.auth.Sessions.Middleware)
 
+	r.Get("/healthz", h.Healthz)
 	r.Get("/", h.Landing)
 	r.Get(auth.LoginPath, h.LoginPage)
 	r.Post("/logout", h.Logout)
