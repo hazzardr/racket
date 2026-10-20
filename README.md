@@ -89,6 +89,43 @@ migrations/         goose migration files
 - CI runs on Forgejo Actions (`.forgejo/workflows/`).
 - GoReleaser publishes releases to Forgejo.
 
+## Deploying
+
+Racket is one static binary that embeds its assets. Deployments install it
+from a release, and can rely on the following.
+
+- **Releases:** each tag publishes `racket_Linux_x86_64.tar.gz` (also
+  `arm64` and `i386`), with the `racket` binary at the archive root, and
+  `racket_<version>_checksums.txt` (the tag without its `v`) holding their
+  SHA-256 sums.
+- **Configuration** is environment variables only (`.env.example` explains
+  each one):
+
+  | Variable | In production |
+  |---|---|
+  | `RACKET_BASE_URL` | The public `https://` URL. Discord's callback is under it, and https makes cookies HTTPS-only |
+  | `RACKET_DISCORD_CLIENT_ID`, `_CLIENT_SECRET`, `_GUILD_ID` | All three |
+  | `RACKET_HOST` | `127.0.0.1` behind a reverse proxy or tunnel |
+  | `PORT` | Default `8080` |
+  | `RACKET_DB` | An absolute path to the database file |
+  | `RACKET_CLIENT_IP_HEADER` | `Cf-Connecting-IP` behind Cloudflare, only when nothing else can reach the app |
+  | `RACKET_DEV_LOGIN` | Never set. It's refused when the base URL is https |
+
+- **Serving:** plain HTTP on `RACKET_HOST:PORT`; TLS ends in front of it.
+- **Health:** `GET /healthz` answers `200 ok` when the database answers,
+  `503` otherwise. It needs no sign-in.
+- **Data:** one SQLite file at `RACKET_DB`. SQLite writes a journal file
+  beside it, so the service user needs write access to the directory. Back it
+  up with `sqlite3 <db> ".backup <file>"`, which is safe while the server
+  runs; copying the file isn't.
+- **Migrations** run on startup and only go forward. An older release isn't
+  guaranteed to work on a newer schema, so roll back by restoring a backup
+  taken before the upgrade, not by installing the old binary alone.
+- **Logs** go to stderr: one line per request, plus app events.
+- **Stopping:** there's no graceful shutdown, so a stop or restart cuts off
+  requests in flight. Each SQLite transaction is atomic, so the database
+  can't be left half-written.
+
 ## Future Goals
 
 The next goals:
