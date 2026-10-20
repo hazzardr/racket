@@ -4,8 +4,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Racket — Hardware Tracker</title>
+  <title>{{if .Title}}{{.Title}} · Racket{{else}}Racket — Hardware Tracker{{end}}</title>
   <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="/static/racket.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/app.css">
   {{/* Applies a saved theme before the page draws, so it doesn't flash
        the system theme first. theme.js runs the picker. */ -}}
@@ -14,6 +15,8 @@
   <script src="/static/board.js" defer></script>
   <script src="/static/theme.js" defer></script>
   <script src="/static/header.js" defer></script>
+  <script src="/static/errors.js" defer></script>
+  <script src="/static/radios.js" defer></script>
 </head>
 <body>
   <header class="header">
@@ -27,7 +30,7 @@
       </a>
       <nav class="nav">
         {{- if .User}}
-        <a href="/people">People</a>
+        <a href="/people"{{if eq .Path "/people"}} aria-current="page"{{end}}>People</a>
         {{/* Your own things live under your name. A plain <details>, so it
              opens without JavaScript; header.js closes it on an outside
              click or Escape. */}}
@@ -37,12 +40,12 @@
             <svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
           </summary>
           <div class="menu">
-            <a href="/users/{{.User.ID}}">Your profile</a>
-            <a href="/machines">Machines</a>
-            <a href="/parts">Parts</a>
+            <a href="/users/{{.User.ID}}"{{if eq .Path (printf "/users/%d" .User.ID)}} aria-current="page"{{end}}>Your profile</a>
+            <a href="/machines"{{if eq .Path "/machines"}} aria-current="page"{{end}}>Machines</a>
+            <a href="/parts"{{if eq .Path "/parts"}} aria-current="page"{{end}}>Parts</a>
             <hr>
-            <a href="/machines/new">New machine</a>
-            <a href="/import">Import from PCPartPicker</a>
+            <a href="/machines/new"{{if eq .Path "/machines/new"}} aria-current="page"{{end}}>New machine</a>
+            <a href="/import"{{if eq .Path "/import"}} aria-current="page"{{end}}>Import from PCPartPicker</a>
             <hr>
             <form method="post" action="/logout">
               <button type="submit">Log out</button>
@@ -50,7 +53,15 @@
           </div>
         </details>
         {{- else}}
-        <a href="/login">Log in</a>
+        {{- if .SignIn.Discord}}
+        <a href="/auth/discord" class="btn btn-small">Log in with Discord</a>
+        {{- end}}
+        {{- if .SignIn.Dev}}
+        <form class="dev-login" method="post" action="/auth/dev">
+          <input name="username" type="text" maxlength="32" required placeholder="Any username" aria-label="Dev login username">
+          <button type="submit" class="btn btn-small btn-secondary">Dev log in</button>
+        </form>
+        {{- end}}
         {{- end}}
         <div class="seg theme-seg" role="radiogroup" aria-label="Theme" data-theme-toggle hidden>
           <button type="button" role="radio" data-theme-choice="auto" aria-checked="true">Auto</button>
@@ -60,7 +71,9 @@
       </nav>
     </div>
   </header>
-  <main class="container">
+  {{/* htmx's history snapshots and restores only <main>, so the header's
+       script-bound controls survive Back. */ -}}
+  <main class="container" hx-history-elt>
 {{- end}}
 
 {{define "page_bottom" -}}

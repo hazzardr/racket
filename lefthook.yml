@@ -7,6 +7,7 @@ pre-commit:
   jobs:
     - name: format
       run: mise run fmt
+      stage_fixed: true
 
     - name: lint
       run: mise run lint

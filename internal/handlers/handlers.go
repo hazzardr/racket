@@ -23,8 +23,6 @@ type Auth struct {
 	Discord *auth.Discord
 	// DevLogin lets anyone sign in as any username, for local development.
 	DevLogin bool
-	// SecureCookies marks cookies HTTPS-only.
-	SecureCookies bool
 }
 
 type Handler struct {
@@ -45,20 +43,58 @@ func viewer(r *http.Request) db.User {
 	return u
 }
 
+// pageTitles names each page in the browser tab. Pages whose title depends
+// on their data implement titled instead; the landing page has none.
+var pageTitles = map[string]string{
+	"machines.html":    "Machines",
+	"new_machine.html": "New machine",
+	"import.html":      "Import from PCPartPicker",
+	partsTemplate:      "Parts",
+	"people.html":      "People",
+}
+
+// titled is page data that names its own page: a machine, a profile.
+type titled interface {
+	PageTitle() string
+}
+
 // render renders a full page with the signed-in user for the header.
 func (h *Handler) render(w http.ResponseWriter, r *http.Request, status int, name string, data any) {
-	page := web.Page{Path: r.URL.Path, Data: data}
+	page := web.Page{
+		Title:  pageTitles[name],
+		SignIn: web.SignIn{Discord: h.auth.Discord != nil, Dev: h.auth.DevLogin},
+		Path:   r.URL.Path,
+		Data:   data,
+	}
+	if t, ok := data.(titled); ok {
+		page.Title = t.PageTitle()
+	}
 	if u, ok := auth.UserFrom(r.Context()); ok {
 		page.User = &u
 	}
 	h.web.Render(w, status, name, page)
 }
 
+// errorPage is the error page state. Title defaults to "Something went
+// wrong".
+type errorPage struct {
+	Title   string
+	Message string
+}
+
+// PageTitle is the error page's heading.
+func (p errorPage) PageTitle() string {
+	if p.Title == "" {
+		return "Something went wrong"
+	}
+	return p.Title
+}
+
 // renderError renders the error page with the given status and a user-facing
 // message. Use serverError for internal failures.
 func (h *Handler) renderError(w http.ResponseWriter, r *http.Request, status int, msg string) {
 	slog.DebugContext(r.Context(), "request error", "status", status, "message", msg)
-	h.render(w, r, status, "error.html", struct{ Message string }{Message: msg})
+	h.render(w, r, status, "error.html", errorPage{Message: msg})
 }
 
 // forbidden renders the error page for a change to someone else's things.
@@ -70,7 +106,7 @@ func (h *Handler) forbidden(w http.ResponseWriter, r *http.Request) {
 // details never reach the client.
 func (h *Handler) serverError(w http.ResponseWriter, r *http.Request, err error) {
 	slog.ErrorContext(r.Context(), "internal error", "method", r.Method, "path", r.URL.Path, "error", err)
-	h.render(w, r, http.StatusInternalServerError, "error.html", struct{ Message string }{
+	h.render(w, r, http.StatusInternalServerError, "error.html", errorPage{
 		Message: "Something went wrong on our end. Please try again.",
 	})
 }

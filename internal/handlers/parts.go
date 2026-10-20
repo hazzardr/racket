@@ -18,6 +18,9 @@ import (
 // partsPath is the parts page route, used in redirect targets.
 const partsPath = "/parts"
 
+// partsTemplate is the parts page's template.
+const partsTemplate = "parts.html"
+
 // partsPage is the parts page data. The parts_board fragment renders from
 // it too.
 type partsPage struct {
@@ -36,6 +39,9 @@ type partsPage struct {
 	// in again after a failed add.
 	Form   spareForm
 	Import pcppForm
+	// Error is set when an action on a part failed, like giving back a
+	// part its owner already took back.
+	Error string
 }
 
 // pcppForm is the paste-a-PCPartPicker-list form's values.
@@ -47,14 +53,16 @@ type pcppForm struct {
 }
 
 // partsNote is what a parts page action tells the page it re-renders: the
-// forms as they were sent, when adding failed.
+// forms as they were sent, when adding failed, or why an action on a part
+// failed.
 type partsNote struct {
 	form   spareForm
 	pasted pcppForm
+	err    string
 }
 
 func (n partsNote) failed() bool {
-	return n.form.Error != "" || n.pasted.Error != ""
+	return n.form.Error != "" || n.pasted.Error != "" || n.err != ""
 }
 
 // inventoryPart is one of the viewer's spares.
@@ -188,13 +196,13 @@ func (h *Handler) PartsPage(w http.ResponseWriter, r *http.Request) {
 		h.serverError(w, r, err)
 		return
 	}
-	h.render(w, r, http.StatusOK, "parts.html", page)
+	h.render(w, r, http.StatusOK, partsTemplate, page)
 }
 
 // finishPartsAction ends a parts page action: a 303 back to the page for
-// native forms, or the re-rendered page body for htmx. A failed add
-// re-renders with the form filled in (422 for native forms, 200 for htmx
-// so it swaps in).
+// native forms, or the re-rendered page body for htmx. A failed action
+// re-renders with its note, and a failed add with the form filled in (422
+// for native forms, 200 for htmx so it swaps in).
 func (h *Handler) finishPartsAction(w http.ResponseWriter, r *http.Request, note partsNote) {
 	if !note.failed() && redirectNative(w, r, partsPath) {
 		return
@@ -204,12 +212,12 @@ func (h *Handler) finishPartsAction(w http.ResponseWriter, r *http.Request, note
 		h.serverError(w, r, err)
 		return
 	}
-	page.Form, page.Import = note.form, note.pasted
+	page.Form, page.Import, page.Error = note.form, note.pasted, note.err
 	if isHX(r) {
 		h.web.Fragment(w, "parts_board", page)
 		return
 	}
-	h.render(w, r, http.StatusUnprocessableEntity, "parts.html", page)
+	h.render(w, r, http.StatusUnprocessableEntity, partsTemplate, page)
 }
 
 // CreateSparePart handles POST /parts: adds a part to the viewer's spares.
@@ -227,16 +235,18 @@ func (h *Handler) CreateSparePart(w http.ResponseWriter, r *http.Request) {
 		Wanted:       r.FormValue("wanted") != "",
 		Lend:         r.FormValue("lend") != "",
 	}
-	var price sql.NullInt64
-	if form.Price != "" {
-		p, ok := parsePrice(form.Price)
-		if !ok {
-			form.Error = "Price should be a number, like 129.99."
-		}
-		price = sql.NullInt64{Int64: toCents(p), Valid: ok}
-	}
-	if form.Name == "" {
-		form.Error = "Part name is required."
+	price, priceOK := formPrice(r)
+	form.Error = tooLong(
+		textField{"Part name", form.Name, maxPartNameLen},
+		textField{"Category", form.Category, maxCategoryLen},
+		textField{"Manufacturer", form.Manufacturer, maxPartFieldLen},
+		textField{"Model", form.Model, maxPartFieldLen},
+	)
+	switch {
+	case form.Name == "":
+		form.Error = partNameRequired
+	case !priceOK:
+		form.Error = badPrice
 	}
 	if form.Error != "" {
 		h.finishPartsAction(w, r, partsNote{form: form})
@@ -325,15 +335,18 @@ func (h *Handler) partAction(w http.ResponseWriter, r *http.Request) (int64, boo
 	return id, true
 }
 
-// finishPartWrite ends a write that should have changed one row: a 403 if
-// it changed none, the re-rendered page otherwise.
-func (h *Handler) finishPartWrite(w http.ResponseWriter, r *http.Request, n int64, err error) {
+// finishPartWrite ends a write that should have changed one row: the
+// re-rendered page, with the note unchanged if it changed none. The write
+// queries filter on the viewer, so that's either someone else's part or one
+// that moved since the page loaded (a lender took it back first); the page
+// shows its parts as they are now either way.
+func (h *Handler) finishPartWrite(w http.ResponseWriter, r *http.Request, n int64, err error, unchanged string) {
 	if err != nil {
 		h.serverError(w, r, err)
 		return
 	}
 	if n == 0 {
-		h.forbidden(w, r)
+		h.finishPartsAction(w, r, partsNote{err: unchanged})
 		return
 	}
 	h.finishPartsAction(w, r, partsNote{})
@@ -352,7 +365,7 @@ func (h *Handler) SetPartLendable(w http.ResponseWriter, r *http.Request) {
 		ID:       id,
 		UserID:   viewer(r).ID,
 	})
-	h.finishPartWrite(w, r, n, err)
+	h.finishPartWrite(w, r, n, err, "Only your own parts that you've bought can be lent.")
 }
 
 // ReturnPart handles POST /parts/{id}/return: the lender takes a part back,
@@ -363,7 +376,7 @@ func (h *Handler) ReturnPart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n, err := h.queries.UnassignPart(r.Context(), db.UnassignPartParams{PartID: id, UserID: viewer(r).ID})
-	h.finishPartWrite(w, r, n, err)
+	h.finishPartWrite(w, r, n, err, "That part isn't on loan to or from you anymore.")
 }
 
 // DeleteSparePart handles POST /parts/{id}/delete. Only a spare can be
@@ -374,5 +387,6 @@ func (h *Handler) DeleteSparePart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n, err := h.queries.DeleteSparePart(r.Context(), db.DeleteSparePartParams{ID: id, OwnerID: viewer(r).ID})
-	h.finishPartWrite(w, r, n, err)
+	h.finishPartWrite(w, r, n, err,
+		"That part isn't one of your spares, so it can't be deleted here. A part on loan stays where it is.")
 }

@@ -12,10 +12,6 @@ gitea_urls:
     api: https://code.brihome.me/api/v1
     download: https://code.brihome.me
 
-before:
-    hooks:
-        - go mod tidy
-
 builds:
     - main: ./cmd/server/
       env:
@@ -33,10 +29,6 @@ archives:
           {{- else if eq .Arch "386" }}i386
           {{- else }}{{ .Arch }}{{ end }}
           {{- if .Arm }}v{{ .Arm }}{{ end }}
-      # use zip for windows archives
-      format_overrides:
-          - goos: windows
-            formats: ["zip"]
 
 changelog:
     sort: asc

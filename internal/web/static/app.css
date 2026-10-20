@@ -4,17 +4,18 @@
   /* Colors follow the system's light or dark setting unless the viewer
      picks one (theme.js sets data-theme). Each token is
      light-dark(light value, dark value). Light mode is a soft slate, not
-     white, so the color coding stands out without glare; its status and
-     label colors are deep enough for 3:1 contrast on every surface. */
+     white, so the color coding stands out without glare. Text colors
+     (accent, status, labels) reach 4.5:1 contrast on every surface in
+     both themes. */
   color-scheme: light dark;
   --color-bg: light-dark(#e6eaf0, #070b14);
   --color-surface: light-dark(#f1f4f8, #0e1628);
   --color-border: light-dark(#cbd3df, #1f2b43);
   --color-text: light-dark(#111827, #e6edf7);
   --color-text-muted: light-dark(#4b5870, #9aa8c2);
-  --color-accent: light-dark(#2f66d8, #7aa7ff);
-  --color-borrowed: light-dark(#c2530a, #fb923c);
-  --color-danger: light-dark(#d02f2f, #f87171);
+  --color-accent: light-dark(#275ed1, #7aa7ff);
+  --color-borrowed: light-dark(#a74809, #fb923c);
+  --color-danger: light-dark(#bf2b2b, #f87171);
 
   /* Machine board */
   --board: light-dark(#dfe4ec, #0a1020);
@@ -27,10 +28,10 @@
   --vent: light-dark(rgba(30, 45, 80, 0.14), rgba(148, 163, 196, 0.16));
   --shadow: light-dark(rgba(15, 23, 42, 0.18), rgba(0, 0, 0, 0.6));
   --sheen: light-dark(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.04));
-  --dim: light-dark(#66728a, #5f6d88);
-  --owned: light-dark(#12873e, #4ade80);
-  --wanted: light-dark(#2f66d8, #8ab4ff);
-  --borrowed: light-dark(#c2530a, #fb923c);
+  --dim: light-dark(#5b667b, #76849f);
+  --owned: light-dark(#107536, #4ade80);
+  --wanted: light-dark(#275ed1, #8ab4ff);
+  --borrowed: light-dark(#a74809, #fb923c);
   --empty: light-dark(#8b96aa, #5f6d88);
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
@@ -136,6 +137,7 @@ body {
 .nav {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.5rem 1.25rem;
 }
 
@@ -145,7 +147,8 @@ body {
   font-size: 0.9375rem;
 }
 
-.nav a:hover {
+.nav a:hover,
+.nav a[aria-current="page"] {
   color: var(--color-text);
 }
 
@@ -272,18 +275,9 @@ body {
   padding: 1.5rem;
 }
 
-.card h2 {
-  font-size: 1.25rem;
-  margin-bottom: 0.5rem;
-}
-
 .card p {
   color: var(--color-text-muted);
   font-size: 0.9375rem;
-}
-
-.location {
-  margin-top: 0.5rem;
 }
 
 /* Machine detail / slots */
@@ -298,8 +292,7 @@ body {
   color: var(--color-text);
 }
 
-.description,
-.location {
+.description {
   color: var(--color-text-muted);
   font-size: 0.9375rem;
   margin-top: 0.25rem;
@@ -337,10 +330,6 @@ body {
 }
 
 /* Header sign-in state */
-
-.nav {
-  align-items: center;
-}
 
 /* The theme picker sits in the nav, smaller than the board's toggles. */
 .seg.theme-seg {
@@ -452,28 +441,40 @@ body {
   border-top: 1px solid var(--line);
 }
 
-.btn-link {
-  background: none;
-  border: none;
-  color: var(--color-text-muted);
-  font: inherit;
-  font-size: 0.9375rem;
-  cursor: pointer;
-  padding: 0;
+/* Signed out, the nav holds the sign-in buttons. .nav a would mute the
+   Discord button's text on its accent fill. */
+.nav a.btn,
+.nav a.btn:hover {
+  color: var(--color-bg);
+  font-size: 0.875rem;
+  align-self: auto;
 }
 
-.btn-link:hover {
-  color: var(--color-text);
-}
-
-.login .btn {
-  margin-top: 0.5rem;
-}
-
+/* Dev login is a one-line form in the nav: a username and a button. */
 .dev-login {
-  margin-top: 2rem;
-  padding-top: 1.5rem;
-  border-top: 1px dashed var(--color-border);
+  display: flex;
+  gap: 0.375rem;
+}
+
+.dev-login input {
+  width: 9rem;
+  padding: 0.375rem 0.625rem;
+  border: 1px dashed var(--line-2);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+/* Stretch the button to the input's height (.btn-small pins it to the top). */
+.dev-login .btn-small {
+  align-self: stretch;
+}
+
+.dev-login input:focus {
+  outline: none;
+  border-color: var(--color-accent);
 }
 
 .external-link {
@@ -785,20 +786,6 @@ body {
   gap: 0.75rem;
 }
 
-.price-refresh {
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-}
-
-.price-refresh .btn-small {
-  align-self: auto;
-}
-
-.price-refresh .meta {
-  margin-top: 0;
-}
-
 .section-actions {
   display: flex;
   flex-wrap: wrap;
@@ -814,7 +801,7 @@ body {
 }
 
 .price-update {
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
   padding: 1rem 1.25rem;
 }
 
@@ -852,10 +839,6 @@ body {
 
 .machine-title {
   min-width: 0;
-}
-
-.machine-page .price-update {
-  margin-bottom: 1.25rem;
 }
 
 .board-root {
@@ -2628,4 +2611,42 @@ legend.field-label {
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* The page you're on, in the user menu. */
+.user-menu .menu a[aria-current="page"] {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* Text for screen readers only. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* A failed htmx action's message (errors.js). Click to dismiss. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.5rem;
+  z-index: 100;
+  max-width: min(32rem, calc(100vw - 2rem));
+  transform: translateX(-50%);
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-danger);
+  border-radius: 8px;
+  background: var(--color-surface);
+  box-shadow: 0 8px 24px var(--shadow);
+  color: var(--color-danger);
+  font-size: 0.9375rem;
+  cursor: pointer;
+}
+
+.toast[hidden] {
+  display: none;
 }

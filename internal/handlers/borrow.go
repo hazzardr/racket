@@ -2,12 +2,13 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"html/template"
 	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
-	"strings"
 
 	"racket/internal/db"
 )
@@ -85,12 +86,6 @@ type borrowNote struct {
 	err      string
 }
 
-// nameKey is a part name as matching compares it, like the queries'
-// lower(trim(name)).
-func nameKey(name string) string {
-	return strings.ToLower(strings.TrimSpace(name))
-}
-
 // friendSpares loads the friends' tab for the viewer, narrowed to the
 // category with key filter ("" for all).
 func (h *Handler) friendSpares(ctx context.Context, viewerID int64, filter string) (friendsView, error) {
@@ -107,7 +102,7 @@ func (h *Handler) friendSpares(ctx context.Context, viewerID int64, filter strin
 	counts := map[string]*categoryFilter{}
 	for _, row := range spares {
 		s := newFriendSpare(row, slots)
-		key := categoryKey(s.Category)
+		key := matchKey(s.Category)
 		if len(s.Matches) > 0 {
 			view.Matching++
 		}
@@ -120,7 +115,7 @@ func (h *Handler) friendSpares(ctx context.Context, viewerID int64, filter strin
 		if filter != "" && key != filter {
 			continue
 		}
-		if n := len(view.Groups); n == 0 || categoryKey(view.Groups[n-1].Category) != key {
+		if n := len(view.Groups); n == 0 || matchKey(view.Groups[n-1].Category) != key {
 			view.Groups = append(view.Groups, friendGroup{Category: s.Category, Style: s.Style})
 		}
 		g := &view.Groups[len(view.Groups)-1]
@@ -140,16 +135,16 @@ func (h *Handler) friendSpares(ctx context.Context, viewerID int64, filter strin
 // ones of its category, and ones whose planned part it matches (first).
 func newFriendSpare(row db.ListFriendSparesRow, slots []db.ListBorrowTargetsRow) friendSpare {
 	s := friendSpare{inventoryPart: newInventoryPart(row.Part), OwnerID: row.Part.OwnerID, OwnerName: row.OwnerName}
-	key := categoryKey(s.Category)
+	key := matchKey(s.Category)
 	for _, slot := range slots {
 		t := borrowTarget{
 			SlotID: slot.SlotID, MachineID: slot.MachineID, MachineName: slot.MachineName, Category: slot.Category,
 		}
 		switch {
-		case slot.WantedName.Valid && nameKey(slot.WantedName.String) == nameKey(s.Name):
+		case slot.WantedName.Valid && matchKey(slot.WantedName.String) == matchKey(s.Name):
 			t.Instead = true
 			s.Matches = append(s.Matches, t)
-		case !slot.WantedName.Valid && categoryKey(slot.Category) == key:
+		case !slot.WantedName.Valid && matchKey(slot.Category) == key:
 			s.Targets = append(s.Targets, t)
 		}
 	}
@@ -160,6 +155,8 @@ func newFriendSpare(row db.ListFriendSparesRow, slots []db.ListBorrowTargetsRow)
 // renderFriendSpares renders the friends' tab: the whole page, or just its
 // body for htmx.
 func (h *Handler) renderFriendSpares(w http.ResponseWriter, r *http.Request, status int, note borrowNote) {
+	// The same URL is a page or a fragment, so caches must tell them apart.
+	w.Header().Add("Vary", "Hx-Request")
 	filter := r.URL.Query().Get("cat")
 	if r.Method == http.MethodPost {
 		filter = r.FormValue("cat")
@@ -175,7 +172,7 @@ func (h *Handler) renderFriendSpares(w http.ResponseWriter, r *http.Request, sta
 		h.web.Fragment(w, "parts_board", page)
 		return
 	}
-	h.render(w, r, status, "parts.html", page)
+	h.render(w, r, status, partsTemplate, page)
 }
 
 // friendsPath is the friends' tab, narrowed to the category with key cat.
@@ -201,30 +198,28 @@ func (h *Handler) BorrowPart(w http.ResponseWriter, r *http.Request) {
 		h.renderFriendSpares(w, r, http.StatusUnprocessableEntity, borrowNote{err: "Pick a slot to put it in."})
 		return
 	}
+	v := viewer(r)
 	slot, err := h.queries.GetSlot(r.Context(), slotID)
-	if err != nil || slot.MachineOwnerID != viewer(r).ID {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		h.serverError(w, r, err)
+		return
+	}
+	if err != nil || slot.MachineOwnerID != v.ID {
 		h.renderFriendSpares(w, r, http.StatusUnprocessableEntity, borrowNote{err: "Pick a slot in one of your machines."})
 		return
 	}
-	// Only a slot the tab offers for this spare: an empty one of its
-	// category, or one whose planned part it matches.
-	view, err := h.friendSpares(r.Context(), viewer(r).ID, "")
+	target, offered, err := h.borrowTarget(r.Context(), v.ID, partID, slotID)
 	if err != nil {
 		h.serverError(w, r, err)
 		return
 	}
-	target := findTarget(view, partID, slotID)
-	if target == nil {
-		h.renderFriendSpares(w, r, http.StatusConflict, borrowNote{
-			err: "That part can't go there anymore. Someone may have borrowed it first.",
-		})
-		return
-	}
-
-	placed, err := h.placePart(r.Context(), slot, partID, viewer(r).ID, true)
-	if err != nil {
-		h.serverError(w, r, err)
-		return
+	placed := false
+	if offered {
+		placed, err = h.placePart(r.Context(), slot, partID, v.ID, true)
+		if err != nil {
+			h.serverError(w, r, err)
+			return
+		}
 	}
 	if !placed {
 		h.renderFriendSpares(w, r, http.StatusConflict, borrowNote{
@@ -235,24 +230,30 @@ func (h *Handler) BorrowPart(w http.ResponseWriter, r *http.Request) {
 	if redirectNative(w, r, friendsPath(r.FormValue("cat"))) {
 		return
 	}
-	h.renderFriendSpares(w, r, http.StatusOK, borrowNote{borrowed: target})
+	h.renderFriendSpares(w, r, http.StatusOK, borrowNote{borrowed: &target})
 }
 
-// findTarget finds the slot slotID among the targets of friend's spare
-// partID, or returns nil if it isn't one.
-func findTarget(view friendsView, partID, slotID int64) *borrowTarget {
-	for _, g := range view.Groups {
-		for _, s := range g.Spares {
-			if s.ID != partID {
-				continue
-			}
-			for _, t := range s.Targets {
-				if t.SlotID == slotID {
-					t.PartName = s.Name
-					return &t
-				}
-			}
+// borrowTarget returns slot slotID if the friends' tab offers it for the
+// friend's spare partID (an empty slot of its category, or one whose
+// planned part it matches), and false if it doesn't.
+func (h *Handler) borrowTarget(ctx context.Context, viewerID, partID, slotID int64) (borrowTarget, bool, error) {
+	spare, err := h.queries.GetFriendSpare(ctx, db.GetFriendSpareParams{ID: partID, UserID: viewerID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return borrowTarget{}, false, nil
+	}
+	if err != nil {
+		return borrowTarget{}, false, err
+	}
+	slots, err := h.queries.ListBorrowTargets(ctx, viewerID)
+	if err != nil {
+		return borrowTarget{}, false, err
+	}
+	s := newFriendSpare(db.ListFriendSparesRow(spare), slots)
+	for _, t := range s.Targets {
+		if t.SlotID == slotID {
+			t.PartName = s.Name
+			return t, true, nil
 		}
 	}
-	return nil
+	return borrowTarget{}, false, nil
 }

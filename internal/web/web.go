@@ -29,13 +29,21 @@ type Web struct {
 	tmpl *template.Template
 }
 
-// Page is the data every full page renders with: the signed-in user (nil
-// when signed out) and the request path for the header, and the page's own
-// data.
+// Page is the data every full page renders with: its title (empty for the
+// landing page), the signed-in user (nil when signed out), the ways to sign
+// in, and the request path for the header, and the page's own data.
 type Page struct {
-	User *db.User
-	Path string
-	Data any
+	Title  string
+	User   *db.User
+	SignIn SignIn
+	Path   string
+	Data   any
+}
+
+// SignIn says which ways to sign in the header offers a signed-out visitor.
+type SignIn struct {
+	Discord bool
+	Dev     bool
 }
 
 var funcs = template.FuncMap{
@@ -51,9 +59,8 @@ var funcs = template.FuncMap{
 		}
 		return fmt.Sprintf("%s%s.%02d", sign, whole, cents%100)
 	},
-	"hasPrefix": strings.HasPrefix,
-	"ago":       ago,
-	"avatar":    avatar,
+	"ago":    ago,
+	"avatar": avatar,
 	// pcppSearch is a PCPartPicker search for a part's name. Imported
 	// names are PCPartPicker's own, so the product is usually the first hit.
 	"pcppSearch": func(name string) string {
@@ -65,13 +72,6 @@ var funcs = template.FuncMap{
 			return strings.ToUpper(string(r))
 		}
 		return "?"
-	},
-	// percent is part/total as a whole percentage, 0 when total is 0.
-	"percent": func(part, total int64) int64 {
-		if total == 0 {
-			return 0
-		}
-		return part * 100 / total
 	},
 }
 

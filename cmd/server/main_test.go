@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,6 +20,19 @@ import (
 // with dev login on.
 func newTestServer(t *testing.T) http.Handler {
 	t.Helper()
+	sqlDB := newTestDB(t)
+	webUI, err := web.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, _ := url.Parse("http://racket.test")
+	return newHandler(sqlDB, webUI, config{baseURL: base, devLogin: true}).Routes()
+}
+
+// newTestDB is an in-memory database, migrated from the embedded
+// migrations (goose's base FS is set in init).
+func newTestDB(t *testing.T) *sql.DB {
+	t.Helper()
 	sqlDB, err := sql.Open("sqlite", sqliteDSN(":memory:"))
 	if err != nil {
 		t.Fatal(err)
@@ -26,15 +40,10 @@ func newTestServer(t *testing.T) http.Handler {
 	t.Cleanup(func() { sqlDB.Close() })
 	// Each pooled connection would get its own empty :memory: database.
 	sqlDB.SetMaxOpenConns(1)
-	if err := goose.Up(sqlDB, "."); err != nil {
+	if err = goose.Up(sqlDB, "."); err != nil {
 		t.Fatal(err)
 	}
-	webUI, err := web.New()
-	if err != nil {
-		t.Fatal(err)
-	}
-	base, _ := url.Parse("http://racket.test")
-	return newHandler(sqlDB, webUI, config{baseURL: base, devLogin: true}).Routes()
+	return sqlDB
 }
 
 // login signs in through dev login and returns the session cookie.
@@ -137,6 +146,19 @@ func TestLoadConfig(t *testing.T) {
 				if !cfg.devLogin || cfg.discord != nil || cfg.baseURL.String() != "http://localhost:8080" {
 					t.Errorf("cfg = %+v", cfg)
 				}
+				if cfg.host != loopback {
+					t.Errorf("host = %q, want dev login on loopback only", cfg.host)
+				}
+			},
+		},
+		{
+			name: "dev login on a chosen host",
+			env:  map[string]string{"RACKET_DEV_LOGIN": "1", "RACKET_HOST": "0.0.0.0"},
+			check: func(t *testing.T, cfg config) {
+				t.Helper()
+				if cfg.host != "0.0.0.0" {
+					t.Errorf("host = %q, want the one set", cfg.host)
+				}
 			},
 		},
 		{
@@ -161,10 +183,10 @@ func TestLoadConfig(t *testing.T) {
 		},
 		{
 			name: "listen host and client IP header",
-			env:  with(discord, "RACKET_HOST", "127.0.0.1", "RACKET_CLIENT_IP_HEADER", "Cf-Connecting-IP"),
+			env:  with(discord, "RACKET_HOST", loopback, "RACKET_CLIENT_IP_HEADER", "Cf-Connecting-IP"),
 			check: func(t *testing.T, cfg config) {
 				t.Helper()
-				if cfg.host != "127.0.0.1" || cfg.clientIPHeader != "Cf-Connecting-IP" {
+				if cfg.host != loopback || cfg.clientIPHeader != "Cf-Connecting-IP" {
 					t.Errorf("host = %q, clientIPHeader = %q", cfg.host, cfg.clientIPHeader)
 				}
 			},
@@ -173,6 +195,16 @@ func TestLoadConfig(t *testing.T) {
 			name:    "base URL without a scheme",
 			env:     with(discord, "RACKET_BASE_URL", "racket.example.com"),
 			wantErr: "RACKET_BASE_URL",
+		},
+		{
+			name:    "base URL with a path",
+			env:     with(discord, "RACKET_BASE_URL", "https://example.com/racket"),
+			wantErr: "no path",
+		},
+		{
+			name:    "base URL with a query",
+			env:     with(discord, "RACKET_BASE_URL", "https://example.com?x=1"),
+			wantErr: "no path",
 		},
 	}
 	vars := []string{
@@ -229,5 +261,28 @@ func TestClientIP(t *testing.T) {
 				t.Errorf("RemoteAddr = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRequestLog(t *testing.T) {
+	var buf strings.Builder
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	h := requestLog(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	h.ServeHTTP(httptest.NewRecorder(),
+		httptest.NewRequest(http.MethodGet, "http://racket.test/auth/discord/callback?code=secret", nil))
+
+	got := buf.String()
+	for _, want := range []string{"method=GET", "path=/auth/discord/callback", "status=418"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log %q missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "secret") {
+		t.Errorf("log %q includes the query", got)
 	}
 }

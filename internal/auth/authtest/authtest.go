@@ -29,6 +29,8 @@ type Discord struct {
 	users   map[string]auth.Identity // by authorization code
 	members map[string]bool          // by user ID
 	failAPI bool
+	// failMember makes the membership check fail with this status.
+	failMember int
 }
 
 // NewDiscord starts a fake Discord, closed when the test ends.
@@ -57,6 +59,14 @@ func (d *Discord) SetFailAPI(fail bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.failAPI = fail
+}
+
+// SetFailMember makes the server membership endpoint return status (0 to
+// stop), for failures other than "not a member".
+func (d *Discord) SetFailMember(status int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.failMember = status
 }
 
 // Config returns a DiscordConfig pointed at the fake.
@@ -134,8 +144,12 @@ func (d *Discord) member(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.mu.Lock()
-	member := d.members[id.ID]
+	member, fail := d.members[id.ID], d.failMember
 	d.mu.Unlock()
+	if fail != 0 {
+		writeError(w, fail, "boom")
+		return
+	}
 	if r.PathValue("guild") != GuildID || !member {
 		writeError(w, http.StatusNotFound, "Unknown Guild")
 		return

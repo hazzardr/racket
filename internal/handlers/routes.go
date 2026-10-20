@@ -21,7 +21,10 @@ func (h *Handler) Routes() http.Handler {
 
 	r.Get("/healthz", h.Healthz)
 	r.Get("/", h.Landing)
-	r.Get(auth.LoginPath, h.LoginPage)
+	// Sign-in moved into the header; old links to the login page land home.
+	r.Get("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/", http.StatusMovedPermanently)
+	})
 	r.Post("/logout", h.Logout)
 	if h.auth.Discord != nil {
 		r.Get(discordLoginPath, h.DiscordLogin)

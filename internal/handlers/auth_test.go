@@ -7,42 +7,45 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
 	"racket/internal/auth"
 	"racket/internal/auth/authtest"
 )
 
-func TestLoginPage(t *testing.T) {
+// The header offers the configured ways to sign in, on every page.
+func TestHeaderSignIn(t *testing.T) {
 	t.Run("dev login", func(t *testing.T) {
-		rr := newTestApp(t).get(nil, auth.LoginPath)
+		rr := newTestApp(t).get(nil, "/")
 		assertStatus(t, rr, http.StatusOK)
 		assertContains(t, rr, `action="/auth/dev"`)
 		assertNotContains(t, rr, "Log in with Discord")
 	})
 	t.Run("Discord", func(t *testing.T) {
-		rr := newTestAppWithDiscord(t).get(nil, auth.LoginPath)
+		rr := newTestAppWithDiscord(t).get(nil, "/")
 		assertStatus(t, rr, http.StatusOK)
 		assertContains(t, rr, "Log in with Discord", `href="/auth/discord"`)
 		assertNotContains(t, rr, `action="/auth/dev"`)
 	})
-	t.Run("already signed in", func(t *testing.T) {
+	t.Run("signed in", func(t *testing.T) {
 		app := newTestApp(t)
-		rr := app.get(app.login("alice"), auth.LoginPath)
-		assertStatus(t, rr, http.StatusSeeOther)
-		if loc := rr.Header().Get("Location"); loc != machinesPath {
-			t.Errorf("redirected to %q, want %s", loc, machinesPath)
-		}
+		rr := app.get(app.login("alice"), "/")
+		assertStatus(t, rr, http.StatusOK)
+		assertNotContains(t, rr, `action="/auth/dev"`)
 	})
 }
 
 func TestDevLogin(t *testing.T) {
 	app := newTestApp(t)
 
-	rr := app.post(nil, devLoginPath, url.Values{"username": {"  "}})
-	assertStatus(t, rr, http.StatusUnprocessableEntity)
-	assertContains(t, rr, "Pick a username")
+	for _, bad := range []string{"  ", strings.Repeat("a", maxDevUsername+1)} {
+		rr := app.post(nil, devLoginPath, url.Values{"username": {bad}})
+		assertStatus(t, rr, http.StatusUnprocessableEntity)
+		assertContains(t, rr, "Pick a username")
+	}
 
 	alice := app.login("alice")
-	rr = app.get(alice, "/machines")
+	rr := app.get(alice, "/machines")
 	assertStatus(t, rr, http.StatusOK)
 	assertContains(t, rr, `class="nav-user">alice</span>`, "Log out")
 
@@ -51,6 +54,9 @@ func TestDevLogin(t *testing.T) {
 	if n := len(mustListUsers(t, app)); n != 1 {
 		t.Errorf("%d users after signing in twice, want 1", n)
 	}
+
+	// The limit counts characters, as the form's maxlength does, not bytes.
+	app.login(strings.Repeat("é", maxDevUsername))
 }
 
 func mustListUsers(t *testing.T, app *testApp) []int64 {
@@ -72,6 +78,49 @@ func mustListUsers(t *testing.T, app *testApp) []int64 {
 		t.Fatal(err)
 	}
 	return ids
+}
+
+func TestOldLoginPageRedirectsHome(t *testing.T) {
+	rr := newTestApp(t).get(nil, "/login")
+	assertStatus(t, rr, http.StatusMovedPermanently)
+	if loc := rr.Header().Get("Location"); loc != "/" {
+		t.Errorf("redirected to %q, want /", loc)
+	}
+}
+
+// Every route outside the public ones needs a signed-in user, including
+// routes added later.
+func TestEveryPrivateRouteRequiresSignIn(t *testing.T) {
+	app := newTestAppWithDiscord(t)
+	public := map[string]bool{
+		"GET /healthz": true, "GET /": true, "GET /login": true, "POST /logout": true,
+		"GET " + discordLoginPath: true, "GET " + discordCallbackPath: true,
+	}
+	routes, ok := app.router.(chi.Routes)
+	if !ok {
+		t.Fatalf("router is %T, want chi.Routes", app.router)
+	}
+	checked := 0
+	err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		// Static assets are served for every method.
+		if public[method+" "+route] || route == "/static/*" {
+			return nil
+		}
+		checked++
+		path := strings.ReplaceAll(route, "{id}", "1")
+		rr := app.do(nil, method, path, nil, false)
+		if rr.Code != http.StatusSeeOther || rr.Header().Get("Location") != auth.LoginPath {
+			t.Errorf("%s %s signed out: status %d, Location %q; want a redirect to sign in",
+				method, route, rr.Code, rr.Header().Get("Location"))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked < 20 {
+		t.Errorf("checked %d routes; the walk missed the private ones", checked)
+	}
 }
 
 func TestDevLoginOffByDefault(t *testing.T) {
@@ -101,6 +150,12 @@ func TestDiscordLoginRedirects(t *testing.T) {
 	state := responseCookie(rr, stateCookie)
 	if state == nil || state.Value == "" || !state.HttpOnly {
 		t.Fatalf("state cookie = %+v, want an HttpOnly random state", state)
+	}
+	// Discord's redirect back is a cross-site top-level GET to the callback:
+	// the cookie must cover that path and be sent on it (Lax, not Strict).
+	if !strings.HasPrefix(discordCallbackPath, state.Path) || state.SameSite != http.SameSiteLaxMode {
+		t.Errorf("state cookie Path=%q SameSite=%v, want it sent to %s (Lax)",
+			state.Path, state.SameSite, discordCallbackPath)
 	}
 	loc, err := url.Parse(rr.Header().Get("Location"))
 	if err != nil {
@@ -132,6 +187,7 @@ func TestDiscordCallback(t *testing.T) {
 		params      url.Values
 		wantStatus  int
 		wantBody    string
+		failMember  int // status for the fake's membership check
 		signedIn    bool
 	}{
 		{
@@ -169,17 +225,29 @@ func TestDiscordCallback(t *testing.T) {
 			params:      url.Values{"state": {"s1"}, "code": {"bogus"}},
 			wantStatus:  http.StatusBadGateway, wantBody: "Couldn&#39;t sign in with Discord",
 		},
+		{
+			name:        "membership check fails",
+			cookieState: "s1",
+			params:      url.Values{"state": {"s1"}, "code": {"alice-code"}},
+			failMember:  http.StatusServiceUnavailable,
+			wantStatus:  http.StatusBadGateway, wantBody: "Couldn&#39;t sign in with Discord",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := newTestAppWithDiscord(t)
 			app.discord.AddUser("alice-code", auth.Identity{ID: "111", Username: "alice", GlobalName: "Alice"}, true)
 			app.discord.AddUser("mallory-code", auth.Identity{ID: "666", Username: "mallory"}, false)
+			app.discord.SetFailMember(tt.failMember)
 
 			rr, session := discordCallback(app, tt.cookieState, tt.params)
 			assertStatus(t, rr, tt.wantStatus)
 			if tt.wantBody != "" {
-				assertContains(t, rr, tt.wantBody)
+				assertContains(t, rr, tt.wantBody, "Couldn&#39;t sign you in")
+			}
+			// The state is single-use: the callback always clears it.
+			if c := responseCookie(rr, stateCookie); c == nil || c.MaxAge >= 0 {
+				t.Errorf("state cookie = %+v, want it cleared", c)
 			}
 			if (session != nil) != tt.signedIn {
 				t.Fatalf("session cookie set = %v, want %v", session != nil, tt.signedIn)

@@ -216,6 +216,7 @@
     panel.hidden = false;
     $$(".is-open", root).forEach((el) => el.classList.remove("is-open"));
     [cardEl(id), bayEl(id), wireEl(id)].forEach((el) => el?.classList.add("is-open"));
+    $$(".slot-card", root).forEach((card) => card.setAttribute("aria-expanded", String(card === cardEl(id))));
     if (focusHeading) {
       $(".pn-name", detail).focus({ preventScroll: true });
     }
@@ -226,6 +227,7 @@
     openId = null;
     $(".slot-panel", root).hidden = true;
     $$(".is-open", root).forEach((el) => el.classList.remove("is-open"));
+    $$(".slot-card", root).forEach((card) => card.setAttribute("aria-expanded", "false"));
     if (restoreFocus && id != null) {
       cardEl(id)?.focus({ preventScroll: true });
     }
@@ -450,7 +452,7 @@
       closePanel(true);
       return;
     }
-    const mode = e.target.closest("[data-color]");
+    const mode = e.target.closest("[data-color-toggle] [data-color]");
     if (mode) {
       setMode(mode.dataset.color);
     }

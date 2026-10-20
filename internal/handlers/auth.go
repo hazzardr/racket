@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"racket/internal/auth"
 	"racket/internal/db"
@@ -29,28 +30,11 @@ const (
 	maxDevUsername = 32
 )
 
-// loginPage is the login page state.
-type loginPage struct {
-	Error    string
-	Discord  bool
-	DevLogin bool
-}
-
-func (h *Handler) renderLogin(w http.ResponseWriter, r *http.Request, status int, msg string) {
-	h.render(w, r, status, "login.html", loginPage{
-		Error:    msg,
-		Discord:  h.auth.Discord != nil,
-		DevLogin: h.auth.DevLogin,
-	})
-}
-
-// LoginPage handles GET /login. Signed-in users go straight to their machines.
-func (h *Handler) LoginPage(w http.ResponseWriter, r *http.Request) {
-	if _, ok := auth.UserFrom(r.Context()); ok {
-		http.Redirect(w, r, machinesPath, http.StatusSeeOther)
-		return
-	}
-	h.renderLogin(w, r, http.StatusOK, "")
+// signInError renders the error page for a sign-in that didn't work; the
+// header's sign-in buttons are there to try again.
+func (h *Handler) signInError(w http.ResponseWriter, r *http.Request, status int, msg string) {
+	slog.DebugContext(r.Context(), "sign-in error", "status", status, "message", msg)
+	h.render(w, r, status, "error.html", errorPage{Title: "Couldn't sign you in", Message: msg})
 }
 
 // DiscordLogin handles GET /auth/discord: sends the browser to Discord.
@@ -63,7 +47,7 @@ func (h *Handler) DiscordLogin(w http.ResponseWriter, r *http.Request) {
 		Path:     discordLoginPath,
 		MaxAge:   stateMaxAge,
 		HttpOnly: true,
-		Secure:   h.auth.SecureCookies,
+		Secure:   h.auth.Sessions.Secure(),
 		SameSite: http.SameSiteLaxMode,
 	})
 	http.Redirect(w, r, h.auth.Discord.AuthCodeURL(state), http.StatusFound)
@@ -78,7 +62,7 @@ func (h *Handler) DiscordCallback(w http.ResponseWriter, r *http.Request) {
 		Path:     discordLoginPath,
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   h.auth.SecureCookies,
+		Secure:   h.auth.Sessions.Secure(),
 		SameSite: http.SameSiteLaxMode,
 	})
 
@@ -86,22 +70,22 @@ func (h *Handler) DiscordCallback(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie(stateCookie)
 	if err != nil || q.Get("state") == "" ||
 		subtle.ConstantTimeCompare([]byte(c.Value), []byte(q.Get("state"))) != 1 {
-		h.renderLogin(w, r, http.StatusBadRequest, "That sign-in link expired. Please try again.")
+		h.signInError(w, r, http.StatusBadRequest, "That sign-in link expired. Please try again.")
 		return
 	}
 	if q.Get("error") != "" {
-		h.renderLogin(w, r, http.StatusBadRequest, "Discord sign-in was cancelled.")
+		h.signInError(w, r, http.StatusBadRequest, "Discord sign-in was cancelled.")
 		return
 	}
 
 	id, err := h.auth.Discord.Identify(r.Context(), q.Get("code"))
 	if errors.Is(err, auth.ErrNotMember) {
-		h.renderLogin(w, r, http.StatusForbidden, "Racket is only open to members of our Discord server.")
+		h.signInError(w, r, http.StatusForbidden, "Racket is only open to members of our Discord server.")
 		return
 	}
 	if err != nil {
 		slog.WarnContext(r.Context(), "Discord sign-in failed", "error", err)
-		h.renderLogin(w, r, http.StatusBadGateway, "Couldn't sign in with Discord. Please try again.")
+		h.signInError(w, r, http.StatusBadGateway, "Couldn't sign in with Discord. Please try again.")
 		return
 	}
 
@@ -122,8 +106,8 @@ func (h *Handler) DiscordCallback(w http.ResponseWriter, r *http.Request) {
 // It's only routed when dev login is on.
 func (h *Handler) DevLogin(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.FormValue("username"))
-	if name == "" || len(name) > maxDevUsername {
-		h.renderLogin(w, r, http.StatusUnprocessableEntity, "Pick a username of up to 32 characters.")
+	if name == "" || utf8.RuneCountInString(name) > maxDevUsername {
+		h.signInError(w, r, http.StatusUnprocessableEntity, "Pick a username of up to 32 characters.")
 		return
 	}
 	user, err := h.queries.UpsertDiscordUser(r.Context(), db.UpsertDiscordUserParams{

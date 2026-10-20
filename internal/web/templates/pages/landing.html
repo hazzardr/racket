@@ -3,15 +3,18 @@
   <div class="hero">
     <h2 class="hero-title">Put your hardware to use</h2>
     <p class="lead">
-      Racket (say it “rack-it”) keeps track of your machines and the parts
+      Racket (“rack-it”) keeps track of your machines and the parts
       inside them. Lend your spares to friends and borrow theirs, so the GPU
       in your drawer gets used instead of forgotten.
     </p>
+    {{if .User}}
     <p class="cta">
-      {{if .User}}<a href="/machines" class="btn">Your machines</a>
+      <a href="/machines" class="btn">Your machines</a>
       <a href="/parts?view=friends" class="btn btn-secondary">Borrow from friends</a>
-      {{- else}}<a href="/login" class="btn">Log in</a>{{end}}
     </p>
+    {{else if .SignIn.Discord}}
+    <p class="cta"><a href="/auth/discord" class="btn">Log in with Discord</a></p>
+    {{end}}
   </div>
 
   {{/* The demo needs JavaScript; demo.js unhides it. Its board is the

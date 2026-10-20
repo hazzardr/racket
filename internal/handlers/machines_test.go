@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"racket/internal/auth"
 	"racket/internal/db"
@@ -28,10 +29,14 @@ func TestAppRequiresLogin(t *testing.T) {
 		}
 	}
 	rr := app.postHX(nil, "/machines", url.Values{"name": {"x"}})
+	assertStatus(t, rr, http.StatusOK)
 	if loc := rr.Header().Get("Hx-Redirect"); loc != auth.LoginPath {
 		t.Errorf("htmx POST /machines: Hx-Redirect %q, want %s", loc, auth.LoginPath)
 	}
-	for _, path := range []string{"/", auth.LoginPath, "/static/app.css"} {
+	if machines, err := app.queries.ListMachines(t.Context()); err != nil || len(machines) != 0 {
+		t.Errorf("signed-out POST /machines: machines %+v, err %v; want none", machines, err)
+	}
+	for _, path := range []string{"/", "/static/app.css"} {
 		assertStatus(t, app.get(nil, path), http.StatusOK)
 	}
 }
@@ -97,6 +102,17 @@ func TestCreateMachineValidation(t *testing.T) {
 		{"name required", url.Values{"name": {""}}, "Name is required."},
 		{"unknown kind", url.Values{"name": {"x"}, "kind": {"toaster"}}, "Pick a kind from the list."},
 		{"unknown status", url.Values{"name": {"x"}, "status": {"lost"}}, "Pick a status from the list."},
+		{"bad date", url.Values{"name": {"x"}, "built_on": {"last spring"}}, "Dates should look like 2026-10-20."},
+		{"bad purchase date", url.Values{"name": {"x"}, "purchased_on": {"2026-13-01"}}, "Dates should look like"},
+		{"long name", url.Values{"name": {strings.Repeat("x", maxNameLen+1)}}, "Name can be at most 100 characters."},
+		{
+			"long description", url.Values{"name": {"x"}, "description": {strings.Repeat("x", maxDescriptionLen+1)}},
+			"Description can be at most 2000 characters.",
+		},
+		{
+			"long location", url.Values{"name": {"x"}, "location": {strings.Repeat("x", maxLocationLen+1)}},
+			"Location can be at most 200 characters.",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -104,6 +120,32 @@ func TestCreateMachineValidation(t *testing.T) {
 			assertStatus(t, rr, http.StatusUnprocessableEntity)
 			assertContains(t, rr, tt.want)
 		})
+	}
+	if machines, _ := app.queries.ListMachines(t.Context()); len(machines) != 0 {
+		t.Errorf("invalid forms created %d machines", len(machines))
+	}
+}
+
+func TestNewMachinePage(t *testing.T) {
+	app := newTestApp(t)
+	rr := app.get(app.login("alice"), "/machines/new")
+	assertStatus(t, rr, http.StatusOK)
+	assertContains(t, rr, `action="/machines"`, `name="name"`, `name="built_on"`)
+}
+
+func TestCreateMachineDates(t *testing.T) {
+	app := newTestApp(t)
+	alice := app.login("alice")
+	rr := app.post(alice, "/machines", url.Values{"name": {"x"}, "built_on": {"2026-10-01"}})
+	assertStatus(t, rr, http.StatusSeeOther)
+	m, err := app.queries.GetMachineByOwnerAndName(t.Context(),
+		db.GetMachineByOwnerAndNameParams{OwnerID: app.user("alice").ID, Name: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.BuiltOn.Time.Format(time.DateOnly); !m.BuiltOn.Valid || got != "2026-10-01" || m.PurchasedOn.Valid {
+		t.Errorf("built %v (%s), purchased %v; want built 2026-10-01 and no purchase date",
+			m.BuiltOn.Valid, got, m.PurchasedOn)
 	}
 }
 
@@ -162,6 +204,48 @@ func TestAddPart(t *testing.T) {
 	if p, _ := app.part(slot.PartID.Int64); p.OwnerID != app.user("alice").ID || p.Status != "owned" {
 		t.Errorf("part = %+v, want alice's, owned", p)
 	}
+}
+
+// Bad input comes back in the slot's panel, and the slot stays empty.
+func TestAddPartValidation(t *testing.T) {
+	app := newTestApp(t)
+	alice := app.login("alice")
+	machineID := app.createMachine(alice, "test")
+	path := slotPath(app.slots(machineID)[0].ID, "/part")
+
+	for _, tt := range []struct {
+		form url.Values
+		want string
+	}{
+		{url.Values{"name": {""}}, "Part name is required."},
+		{url.Values{"name": {"x"}, "price": {"cheap"}}, "Price should be a number"},
+		{url.Values{"name": {"x"}, "price": {"-5"}}, "Price should be a number"},
+		{url.Values{"name": {"x"}, "price": {"5000000000000000000"}}, "Price should be a number"},
+		{url.Values{"name": {strings.Repeat("x", maxPartNameLen+1)}}, "Part name can be at most 300 characters."},
+		{url.Values{"name": {"x"}, "model": {strings.Repeat("x", maxPartFieldLen+1)}}, "Model can be at most"},
+		{url.Values{"name": {"x"}, "manufacturer": {strings.Repeat("x", maxPartFieldLen+1)}}, "Manufacturer can be at most"},
+	} {
+		rr := app.postHX(alice, path, tt.form)
+		assertStatus(t, rr, http.StatusOK)
+		assertContains(t, rr, `role="alert">`+tt.want)
+	}
+	if slot := app.slots(machineID)[0]; slot.PartID.Valid {
+		t.Errorf("slot = %+v, want it still empty", slot)
+	}
+}
+
+// Prices are capped, so the machine list's totals can't overflow.
+func TestHugePricesCantBreakTotals(t *testing.T) {
+	app := newTestApp(t)
+	alice := app.login("alice")
+	machineID := app.createMachine(alice, "test")
+	for _, slot := range app.slots(machineID)[:2] {
+		form := url.Values{"name": {"x"}, "price": {"1000000"}}
+		assertStatus(t, app.post(alice, slotPath(slot.ID, "/part"), form), http.StatusSeeOther)
+	}
+	rr := app.get(alice, "/machines")
+	assertStatus(t, rr, http.StatusOK)
+	assertContains(t, rr, "2,000,000")
 }
 
 func TestAddUnboughtPart(t *testing.T) {
@@ -295,7 +379,18 @@ func TestCreateSlot(t *testing.T) {
 		t.Fatalf("slots = %d, last %+v; want an empty NIC slot appended", len(slots), last)
 	}
 
-	assertStatus(t, app.postHX(alice, path, url.Values{"category": {""}}), http.StatusBadRequest)
+	// htmx swaps only a 200, so a bad category comes back on the board.
+	for _, category := range []string{"", strings.Repeat("x", maxCategoryLen+1)} {
+		rr = app.postHX(alice, path, url.Values{"category": {category}})
+		assertStatus(t, rr, http.StatusOK)
+		assertContains(t, rr, `id="board-root"`, `role="alert">Slot category`)
+	}
+	rr = app.post(alice, path, url.Values{"category": {""}})
+	assertStatus(t, rr, http.StatusUnprocessableEntity)
+	assertContains(t, rr, "<!doctype html>", "Slot category is required.")
+	if n := len(app.slots(machineID)); n != len(defaultSlots)+1 {
+		t.Errorf("got %d slots after bad categories, want %d", n, len(defaultSlots)+1)
+	}
 }
 
 func TestDeleteSlotKeepsPart(t *testing.T) {

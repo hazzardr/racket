@@ -72,17 +72,27 @@ func (h *Handler) AddPart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := strings.TrimSpace(r.FormValue("name"))
-	if name == "" {
-		h.finishSlotAction(w, r, slot, boardNote{err: "Part name is required."})
+	manufacturer := strings.TrimSpace(r.FormValue("manufacturer"))
+	model := strings.TrimSpace(r.FormValue("model"))
+	price, priceOK := formPrice(r)
+	msg := tooLong(
+		textField{"Part name", name, maxPartNameLen},
+		textField{"Manufacturer", manufacturer, maxPartFieldLen},
+		textField{"Model", model, maxPartFieldLen},
+	)
+	switch {
+	case name == "":
+		msg = partNameRequired
+	case !priceOK:
+		msg = badPrice
+	}
+	if msg != "" {
+		h.finishSlotAction(w, r, slot, boardNote{err: msg})
 		return
 	}
 	status := partOwned
 	if r.FormValue("wanted") != "" {
 		status = partWanted
-	}
-	var price sql.NullInt64
-	if p, ok := parsePrice(r.FormValue("price")); ok {
-		price = sql.NullInt64{Int64: toCents(p), Valid: true}
 	}
 
 	_, err := h.queries.CreatePart(r.Context(), db.CreatePartParams{
@@ -91,19 +101,21 @@ func (h *Handler) AddPart(w http.ResponseWriter, r *http.Request) {
 		Status:       status,
 		Name:         name,
 		Category:     sql.NullString{String: slot.Category, Valid: true},
-		Manufacturer: optionalString(strings.TrimSpace(r.FormValue("manufacturer"))),
-		Model:        optionalString(strings.TrimSpace(r.FormValue("model"))),
+		Manufacturer: optionalString(manufacturer),
+		Model:        optionalString(model),
 		PriceCents:   price,
 	})
-	if err != nil {
-		if isUniqueViolation(err) {
-			h.finishSlotAction(w, r, slot, boardNote{err: "Slot already filled."})
-			return
-		}
+	switch {
+	case isUniqueViolation(err):
+		h.finishSlotAction(w, r, slot, boardNote{err: "Slot already filled."})
+	case errors.Is(err, sql.ErrNoRows):
+		// The slot's machine stopped being the viewer's (it was deleted).
+		h.forbidden(w, r)
+	case err != nil:
 		h.serverError(w, r, err)
-		return
+	default:
+		h.finishSlotAction(w, r, slot, boardNote{seated: true})
 	}
-	h.finishSlotAction(w, r, slot, boardNote{seated: true})
 }
 
 // RemovePart handles POST /slots/{id}/part/delete. The machine's owner
@@ -126,22 +138,34 @@ func (h *Handler) RemovePart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	v := viewer(r)
+	if slot.MachineOwnerID != v.ID && row.PartOwnerID.Int64 != v.ID {
+		h.forbidden(w, r)
+		return
+	}
+	// Both writes apply only while the part is still in this slot.
+	inSlot := sql.NullInt64{Int64: slot.ID, Valid: true}
 	var n int64
 	if slot.MachineOwnerID == v.ID && row.PartOwnerID.Int64 == v.ID {
-		n, err = h.queries.DeletePart(r.Context(), db.DeletePartParams{ID: row.PartID.Int64, OwnerID: v.ID})
+		n, err = h.queries.DeletePart(r.Context(), db.DeletePartParams{ID: row.PartID.Int64, OwnerID: v.ID, SlotID: inSlot})
 	} else {
-		n, err = h.queries.UnassignPart(r.Context(), db.UnassignPartParams{PartID: row.PartID.Int64, UserID: v.ID})
+		n, err = h.queries.UnassignPart(r.Context(), db.UnassignPartParams{
+			PartID: row.PartID.Int64, SlotID: inSlot, UserID: v.ID,
+		})
 	}
 	if err != nil {
 		h.serverError(w, r, err)
 		return
 	}
 	if n == 0 {
-		h.forbidden(w, r)
+		h.finishSlotAction(w, r, slot, boardNote{err: partMoved})
 		return
 	}
 	h.finishSlotAction(w, r, slot, boardNote{})
 }
+
+// partMoved is the note for a part that left its slot between the page
+// loading and the action.
+const partMoved = "That part isn't in this slot anymore. Here's the machine as it is now."
 
 // CreateSlot handles POST /machines/{id}/slots (form field "category") and
 // returns the re-rendered board.
@@ -154,25 +178,32 @@ func (h *Handler) CreateSlot(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	board := db.GetSlotRow{MachineID: machine.Machine.ID, MachineOwnerID: machine.Machine.OwnerID}
 	category := strings.TrimSpace(r.FormValue("category"))
+	msg := tooLong(textField{"Slot category", category, maxCategoryLen})
 	if category == "" {
-		h.renderError(w, r, http.StatusBadRequest, "category is required")
+		msg = "Slot category is required."
+	}
+	if msg != "" {
+		h.finishSlotAction(w, r, board, boardNote{err: msg})
 		return
 	}
 
 	slot, err := h.queries.CreateSlot(r.Context(), db.CreateSlotParams{
 		MachineID: machine.Machine.ID,
 		Category:  category,
+		UserID:    viewer(r).ID,
 	})
+	if errors.Is(err, sql.ErrNoRows) {
+		h.forbidden(w, r)
+		return
+	}
 	if err != nil {
 		h.serverError(w, r, err)
 		return
 	}
-	h.finishSlotAction(w, r, db.GetSlotRow{
-		ID:             slot.ID,
-		MachineID:      slot.MachineID,
-		MachineOwnerID: machine.Machine.OwnerID,
-	}, boardNote{})
+	board.ID = slot.ID
+	h.finishSlotAction(w, r, board, boardNote{})
 }
 
 // DeleteSlot handles POST /slots/{id}/delete. A part in the slot goes back to
@@ -243,10 +274,11 @@ func (h *Handler) placePart(ctx context.Context, slot db.GetSlotRow, partID, use
 		if row.PartID.Int64 == partID {
 			return true, nil
 		}
+		inSlot := sql.NullInt64{Int64: slot.ID, Valid: true}
 		if replace && row.PartStatus.String == partWanted && row.PartOwnerID.Int64 == userID {
-			_, err = q.DeletePart(ctx, db.DeletePartParams{ID: row.PartID.Int64, OwnerID: userID})
+			_, err = q.DeletePart(ctx, db.DeletePartParams{ID: row.PartID.Int64, OwnerID: userID, SlotID: inSlot})
 		} else {
-			_, err = q.UnassignPart(ctx, db.UnassignPartParams{PartID: row.PartID.Int64, UserID: userID})
+			_, err = q.UnassignPart(ctx, db.UnassignPartParams{PartID: row.PartID.Int64, SlotID: inSlot, UserID: userID})
 		}
 		if err != nil {
 			return false, err
@@ -285,21 +317,45 @@ func (h *Handler) TakeOutPart(w http.ResponseWriter, r *http.Request) {
 		h.finishSlotAction(w, r, slot, boardNote{})
 		return
 	}
-	partID, userID := row.PartID.Int64, viewer(r).ID
-	if r.FormValue("lend") != "" && row.PartOwnerID.Int64 == userID {
-		n, err := h.queries.SetPartLendable(r.Context(), db.SetPartLendableParams{Lendable: true, ID: partID, UserID: userID})
-		if err != nil {
-			h.serverError(w, r, err)
-			return
-		}
-		if n == 0 {
-			h.finishSlotAction(w, r, slot, boardNote{err: "Only parts you've bought can be lent."})
-			return
-		}
-	}
-	if _, err = h.queries.UnassignPart(r.Context(), db.UnassignPartParams{PartID: partID, UserID: userID}); err != nil {
+	lend := r.FormValue("lend") != "" && row.PartOwnerID.Int64 == viewer(r).ID
+	msg, err := h.takeOutPart(r.Context(), slot, row.PartID.Int64, viewer(r).ID, lend)
+	if err != nil {
 		h.serverError(w, r, err)
 		return
 	}
-	h.finishSlotAction(w, r, slot, boardNote{})
+	h.finishSlotAction(w, r, slot, boardNote{err: msg})
+}
+
+// takeOutPart takes the part out of the slot, and with lend makes it
+// lendable, in one transaction. It returns a note instead if it can't.
+func (h *Handler) takeOutPart(
+	ctx context.Context, slot db.GetSlotRow, partID, userID int64, lend bool,
+) (string, error) {
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := h.queries.WithTx(tx)
+
+	var n int64
+	if lend {
+		n, err = q.SetPartLendable(ctx, db.SetPartLendableParams{Lendable: true, ID: partID, UserID: userID})
+		if err != nil {
+			return "", err
+		}
+		if n == 0 {
+			return "Only parts you've bought can be lent.", nil
+		}
+	}
+	n, err = q.UnassignPart(ctx, db.UnassignPartParams{
+		PartID: partID, SlotID: sql.NullInt64{Int64: slot.ID, Valid: true}, UserID: userID,
+	})
+	if err != nil {
+		return "", err
+	}
+	if n == 0 {
+		return partMoved, nil
+	}
+	return "", tx.Commit()
 }

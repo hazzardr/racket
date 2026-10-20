@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -77,9 +78,15 @@ func TestLendingASpare(t *testing.T) {
 	assertNotContains(t, app.get(bob, machinePath(bobPC, "")), "RTX 3080")
 	assertContains(t, app.postHX(bob, gpuSlot, place), "That part can&#39;t go in this slot.")
 
-	// Only Alice can lend it.
-	assertStatus(t, app.postHX(bob, partPath(gpuID, "/lend"), url.Values{"lendable": {"1"}}), http.StatusForbidden)
-	rr := app.postHX(alice, partPath(gpuID, "/lend"), url.Values{"lendable": {"1"}})
+	// Only Alice can lend it. Bob's try changes nothing, and htmx gets his
+	// parts page back with a note.
+	rr := app.postHX(bob, partPath(gpuID, "/lend"), url.Values{"lendable": {"1"}})
+	assertStatus(t, rr, http.StatusOK)
+	assertContains(t, rr, `id="parts-root"`, "Only your own parts that you&#39;ve bought can be lent.")
+	if p, _ := app.queries.ListLendingSpares(t.Context(), app.user("alice").ID); len(p) != 0 {
+		t.Fatalf("Bob made Alice's GPU lendable: %+v", p)
+	}
+	rr = app.postHX(alice, partPath(gpuID, "/lend"), url.Values{"lendable": {"1"}})
 	assertStatus(t, rr, http.StatusOK)
 	assertContains(t, rr, "Stop lending")
 
@@ -110,7 +117,7 @@ func TestReturnPart(t *testing.T) {
 	}{
 		{name: "borrower gives it back", actor: "bob", want: http.StatusSeeOther},
 		{name: "lender takes it back", actor: "alice", want: http.StatusSeeOther},
-		{name: "outsider can't", actor: "carol", want: http.StatusForbidden},
+		{name: "outsider can't", actor: "carol", want: http.StatusUnprocessableEntity},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			app := newTestApp(t)
@@ -128,6 +135,44 @@ func TestReturnPart(t *testing.T) {
 	}
 }
 
+// A borrower who gives a part back after its owner already took it gets
+// their parts page as it is now, with a note, instead of nothing.
+func TestGiveBackAfterLenderTookIt(t *testing.T) {
+	app := newTestApp(t)
+	alice, bob := app.login("alice"), app.login("bob")
+	bobPC := app.createMachine(bob, "bob-pc")
+	gpu := app.sparePart(app.user("alice"), "RTX 3080")
+	app.borrow(app.user("bob"), gpu, app.slots(bobPC)[6].ID)
+	assertContains(t, app.get(bob, partsPath), "RTX 3080", "Give back")
+
+	assertStatus(t, app.post(alice, partPath(gpu.ID, "/return"), nil), http.StatusSeeOther)
+	rr := app.postHX(bob, partPath(gpu.ID, "/return"), nil)
+	assertStatus(t, rr, http.StatusOK)
+	assertContains(t, rr, `id="parts-root"`, `role="alert">That part isn&#39;t on loan to or from you anymore.`)
+	assertNotContains(t, rr, "RTX 3080", "<!doctype html>")
+}
+
+func TestAddSparePartLimits(t *testing.T) {
+	app := newTestApp(t)
+	alice := app.login("alice")
+	for _, tt := range []struct {
+		form url.Values
+		want string
+	}{
+		{url.Values{"name": {"x"}, "price": {"5000000000000000000"}}, "Price should be a number"},
+		{url.Values{"name": {"x"}, "price": {"-5"}}, "Price should be a number"},
+		{url.Values{"name": {strings.Repeat("x", maxPartNameLen+1)}}, "Part name can be at most 300 characters."},
+		{url.Values{"name": {"x"}, "category": {strings.Repeat("x", maxCategoryLen+1)}}, "Category can be at most"},
+	} {
+		rr := app.postHX(alice, partsPath, tt.form)
+		assertStatus(t, rr, http.StatusOK)
+		assertContains(t, rr, tt.want)
+	}
+	if parts := app.ownedParts("alice"); len(parts) != 0 {
+		t.Errorf("rejected adds created %d parts", len(parts))
+	}
+}
+
 func TestDeleteSparePart(t *testing.T) {
 	app := newTestApp(t)
 	alice, bob := app.login("alice"), app.login("bob")
@@ -136,9 +181,14 @@ func TestDeleteSparePart(t *testing.T) {
 	lent := app.sparePart(app.user("alice"), "RTX 3080")
 	app.borrow(app.user("bob"), lent, app.slots(bobPC)[6].ID)
 
-	assertStatus(t, app.post(bob, partPath(spare.ID, "/delete"), nil), http.StatusForbidden)
+	rr := app.post(bob, partPath(spare.ID, "/delete"), nil)
+	assertStatus(t, rr, http.StatusUnprocessableEntity)
+	assertContains(t, rr, "That part isn&#39;t one of your spares")
+	if _, ok := app.part(spare.ID); !ok {
+		t.Fatal("Bob deleted Alice's spare")
+	}
 	// A lent part stays in Bob's machine.
-	assertStatus(t, app.post(alice, partPath(lent.ID, "/delete"), nil), http.StatusForbidden)
+	assertStatus(t, app.post(alice, partPath(lent.ID, "/delete"), nil), http.StatusUnprocessableEntity)
 	if _, ok := app.part(lent.ID); !ok {
 		t.Fatal("Alice's lent GPU was deleted out of Bob's machine")
 	}

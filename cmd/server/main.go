@@ -11,7 +11,9 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -42,8 +44,16 @@ func main() {
 	})
 	slog.SetDefault(slog.New(logger))
 
+	// With arguments, racket runs an admin command instead of the server.
+	if len(os.Args) > 1 {
+		if err := runCommand(context.Background(), os.Args[1:]); err != nil {
+			slog.Error("command failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
-		slog.Error("failed to start racket", "error", err)
+		slog.Error("racket stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -57,10 +67,14 @@ const (
 
 const schemeHTTPS = "https"
 
+// loopback is the listen address only this machine can reach.
+const loopback = "127.0.0.1"
+
 // config is the server configuration, read from the environment.
 type config struct {
 	dbPath string
 	// host is the address to listen on; empty means every interface.
+	// With dev login it defaults to loopback.
 	host    string
 	port    string
 	baseURL *url.URL
@@ -95,6 +109,10 @@ func loadConfig() (config, error) {
 	if err != nil || (base.Scheme != "http" && base.Scheme != schemeHTTPS) || base.Host == "" {
 		return config{}, fmt.Errorf("RACKET_BASE_URL must be an http(s) URL like https://racket.example.com, got %q", rawBase)
 	}
+	// Routes and cookies all live at the root, so a path would break sign-in.
+	if base.Path != "" || base.RawQuery != "" || base.Fragment != "" || base.User != nil {
+		return config{}, fmt.Errorf("RACKET_BASE_URL must be just a scheme and host, with no path, got %q", rawBase)
+	}
 	cfg.baseURL = base
 
 	discordVars := []string{envDiscordClientID, envDiscordClientSecret, envDiscordGuildID}
@@ -121,6 +139,11 @@ func loadConfig() (config, error) {
 		return config{}, errors.New("RACKET_DEV_LOGIN lets anyone sign in as anyone, " +
 			"so it's refused when RACKET_BASE_URL is https (a real deployment)")
 	}
+	// Dev login lets anyone sign in as anyone, so by default only this
+	// machine can reach it, not the whole network.
+	if cfg.devLogin && cfg.host == "" {
+		cfg.host = loopback
+	}
 	if cfg.discord == nil && !cfg.devLogin {
 		return config{}, errors.New("no way to sign in: set RACKET_DISCORD_CLIENT_ID, " +
 			"RACKET_DISCORD_CLIENT_SECRET, and RACKET_DISCORD_GUILD_ID, " +
@@ -129,11 +152,14 @@ func loadConfig() (config, error) {
 	return cfg, nil
 }
 
-// sqliteDSN turns a plain path into a file: URI with foreign key enforcement
-// and a busy timeout. SQLite defaults PRAGMA foreign_keys to off, which would
-// silently disable the schema's ON DELETE CASCADE/SET NULL clauses. Without
-// busy_timeout, a write that hits another connection's lock fails immediately
-// with "database is locked" instead of waiting.
+// sqliteDSN turns a plain path into a file: URI with foreign key enforcement,
+// a busy timeout, and immediate transactions. SQLite defaults PRAGMA
+// foreign_keys to off, which would silently disable the schema's ON DELETE
+// CASCADE/SET NULL clauses. Without busy_timeout, a write that hits another
+// connection's lock fails immediately with "database is locked" instead of
+// waiting. A deferred transaction that reads and then writes can still fail
+// that way, without waiting, when another one is writing; _txlock=immediate
+// takes the write lock at BEGIN, where busy_timeout applies.
 func sqliteDSN(path string) string {
 	if !strings.HasPrefix(path, "file:") {
 		path = "file:" + path
@@ -142,7 +168,24 @@ func sqliteDSN(path string) string {
 	if strings.Contains(path, "?") {
 		sep = "&"
 	}
-	return path + sep + "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+	return path + sep + "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate"
+}
+
+// openDB opens the database at path and brings its schema up to date.
+func openDB(path string) (*sql.DB, error) {
+	sqlDB, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	if err = sqlDB.PingContext(context.Background()); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("ping database: %w", err)
+	}
+	if err = goose.Up(sqlDB, "."); err != nil {
+		sqlDB.Close()
+		return nil, fmt.Errorf("run migrations: %w", err)
+	}
+	return sqlDB, nil
 }
 
 func run() error {
@@ -151,19 +194,11 @@ func run() error {
 		return err
 	}
 
-	sqlDB, err := sql.Open("sqlite", sqliteDSN(cfg.dbPath))
+	sqlDB, err := openDB(cfg.dbPath)
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return err
 	}
 	defer sqlDB.Close()
-
-	if err := sqlDB.PingContext(context.Background()); err != nil {
-		return fmt.Errorf("ping database: %w", err)
-	}
-
-	if err := goose.Up(sqlDB, "."); err != nil {
-		return fmt.Errorf("run migrations: %w", err)
-	}
 
 	webUI, err := web.New()
 	if err != nil {
@@ -179,17 +214,53 @@ func run() error {
 
 	server := &http.Server{
 		Addr:         net.JoinHostPort(cfg.host, cfg.port),
-		Handler:      clientIP(cfg.clientIPHeader, middleware.Logger(h.Routes())),
+		Handler:      clientIP(cfg.clientIPHeader, requestLog(h.Routes())),
 		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		WriteTimeout: writeTimeout,
 		IdleTimeout:  120 * time.Second,
 	}
 
+	// A stop signal lets requests in flight finish before the server exits.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	served := make(chan error, 1)
+	go func() { served <- server.ListenAndServe() }()
 	slog.Info("racket listening", "addr", server.Addr, "base_url", cfg.baseURL.String())
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	select {
+	case err := <-served:
 		return fmt.Errorf("server error: %w", err)
+	case <-ctx.Done():
+	}
+
+	slog.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shut down: %w", err)
 	}
 	return nil
+}
+
+// writeTimeout bounds a response, and so also how long shutdown waits for
+// requests in flight.
+const writeTimeout = 10 * time.Second
+
+// requestLog logs one line per request through slog, so request logs go to
+// stderr with the app's own. It logs the path without the query, which can
+// hold Discord's sign-in code.
+func requestLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		next.ServeHTTP(ww, r)
+		status := ww.Status()
+		if status == 0 { // nothing written: net/http sends 200
+			status = http.StatusOK
+		}
+		slog.InfoContext(r.Context(), "request",
+			"method", r.Method, "path", r.URL.Path, "status", status,
+			"bytes", ww.BytesWritten(), "duration", time.Since(start), "remote", r.RemoteAddr)
+	})
 }
 
 // clientIP sets r.RemoteAddr from the header a reverse proxy puts the
@@ -212,11 +283,9 @@ func clientIP(header string, next http.Handler) http.Handler {
 // newHandler wires the handlers to the database, templates, and sign-in.
 func newHandler(sqlDB *sql.DB, webUI *web.Web, cfg config) *handlers.Handler {
 	queries := db.New(sqlDB)
-	secure := cfg.baseURL.Scheme == schemeHTTPS
 	a := handlers.Auth{
-		Sessions:      auth.NewSessions(queries, secure),
-		DevLogin:      cfg.devLogin,
-		SecureCookies: secure,
+		Sessions: auth.NewSessions(queries, cfg.baseURL.Scheme == schemeHTTPS),
+		DevLogin: cfg.devLogin,
 	}
 	if cfg.discord != nil {
 		a.Discord = auth.NewDiscord(*cfg.discord)

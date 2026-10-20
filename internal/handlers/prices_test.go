@@ -235,6 +235,17 @@ func TestMarkPartBought(t *testing.T) {
 		t.Errorf("CPU = %s at %v, want owned at 44900", cpu.Status, cpu.PriceCents)
 	}
 
+	// A price paid that isn't one is reported, not dropped.
+	storage := slotOf(t, app.slots(machineID), "Samsung 990 Pro 2 TB")
+	for _, price := range []string{"cheap", "-5", "5000000000000000000"} {
+		rr = app.postHX(alice, slotPath(storage, "/part/bought"), url.Values{"price": {price}})
+		assertStatus(t, rr, http.StatusOK)
+		assertContains(t, rr, "Price should be a number")
+	}
+	if ssd := app.partsNamed("alice", "Samsung 990 Pro 2 TB")[0]; ssd.Status != partWanted {
+		t.Errorf("SSD = %s, want still not bought", ssd.Status)
+	}
+
 	// It's bought now, so it can't be bought again.
 	rr = app.postHX(alice, slotPath(cpuSlot, "/part/bought"), url.Values{"price": {"1"}})
 	assertContains(t, rr, "Only your own parts that aren&#39;t bought yet can be marked bought.")
@@ -254,8 +265,8 @@ func TestMatchSourceRows(t *testing.T) {
 		part(4, "Case", "Fractal North"),
 	}
 	rows := []csvRow{
-		{category: "storage", name: " samsung 990 pro ", price: 150, hasPrice: true},
-		{category: "CPU", name: "Ryzen 7 9800X3D", price: 400, hasPrice: true},
+		{category: "storage", name: " samsung 990 pro ", cents: 15000, hasPrice: true},
+		{category: "CPU", name: "Ryzen 7 9800X3D", cents: 40000, hasPrice: true},
 		{category: "Memory", name: "Fractal North"}, // same name, other type
 	}
 	got := matchSourceRows(parts, rows)
@@ -263,7 +274,7 @@ func TestMatchSourceRows(t *testing.T) {
 	if !found(0) || found(1) || !found(2) || found(3) {
 		t.Errorf("matched = %v %v %v %v, want true false true false", found(0), found(1), found(2), found(3))
 	}
-	if found(2) && got[2].row.price != 400 {
-		t.Errorf("CPU matched the row priced %v, want 400", got[2].row.price)
+	if found(2) && got[2].row.cents != 40000 {
+		t.Errorf("CPU matched the row priced %v, want 40000", got[2].row.cents)
 	}
 }

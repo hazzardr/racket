@@ -97,7 +97,15 @@ INSERT INTO parts (
     owner_id, slot_id, status, name, category, manufacturer, model,
     price_cents, purchased_from, source_url, price_checked_at, lendable
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+SELECT
+    ?1, ?2, ?3, ?4,
+    ?5, ?6, ?7,
+    ?8, ?9, ?10,
+    ?11, ?12
+WHERE ?2 IS NULL OR EXISTS (
+    SELECT 1 FROM machine_slots s JOIN machines m ON m.id = s.machine_id
+    WHERE s.id = ?2 AND m.owner_id = ?1
+)
 RETURNING id, owner_id, slot_id, status, name, category, manufacturer, model, serial_number, price_cents, currency, purchased_on, purchased_from, warranty_expires, product_url, guide_url, notes, created_at, updated_at, source_url, price_checked_at, previous_price_cents, missing_from_source_at, lendable
 `
 
@@ -117,6 +125,8 @@ type CreatePartParams struct {
 }
 
 // Parts ---------------------------------------------------------------------
+// A part in a slot goes only into one of its owner's machines: otherwise
+// it inserts nothing (sql.ErrNoRows).
 func (q *Queries) CreatePart(ctx context.Context, arg CreatePartParams) (Part, error) {
 	row := q.db.QueryRowContext(ctx, createPart,
 		arg.OwnerID,
@@ -180,22 +190,24 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 const createSlot = `-- name: CreateSlot :one
 
 INSERT INTO machine_slots (machine_id, category, position)
-VALUES (
+SELECT
     ?1, ?2,
     (SELECT coalesce(max(position), -1) + 1 FROM machine_slots WHERE machine_id = ?1)
-)
+WHERE EXISTS (SELECT 1 FROM machines WHERE id = ?1 AND owner_id = ?3)
 RETURNING id, machine_id, category, position, created_at
 `
 
 type CreateSlotParams struct {
 	MachineID int64
 	Category  string
+	UserID    int64
 }
 
 // Slots ---------------------------------------------------------------------
-// Appends a slot after the machine's existing ones.
+// Appends a slot after the machine's existing ones. It inserts nothing
+// (sql.ErrNoRows) unless the user owns the machine.
 func (q *Queries) CreateSlot(ctx context.Context, arg CreateSlotParams) (MachineSlot, error) {
-	row := q.db.QueryRowContext(ctx, createSlot, arg.MachineID, arg.Category)
+	row := q.db.QueryRowContext(ctx, createSlot, arg.MachineID, arg.Category, arg.UserID)
 	var i MachineSlot
 	err := row.Scan(
 		&i.ID,
@@ -234,16 +246,18 @@ func (q *Queries) DeleteMachine(ctx context.Context, arg DeleteMachineParams) (i
 }
 
 const deletePart = `-- name: DeletePart :execrows
-DELETE FROM parts WHERE id = ? AND owner_id = ?
+DELETE FROM parts WHERE id = ? AND owner_id = ? AND slot_id = ?
 `
 
 type DeletePartParams struct {
 	ID      int64
 	OwnerID int64
+	SlotID  sql.NullInt64
 }
 
+// Only while the part is still in the slot the caller saw it in.
 func (q *Queries) DeletePart(ctx context.Context, arg DeletePartParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deletePart, arg.ID, arg.OwnerID)
+	result, err := q.db.ExecContext(ctx, deletePart, arg.ID, arg.OwnerID, arg.SlotID)
 	if err != nil {
 		return 0, err
 	}
@@ -304,6 +318,100 @@ func (q *Queries) DeleteSparePart(ctx context.Context, arg DeleteSparePartParams
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const findCurrentUsers = `-- name: FindCurrentUsers :many
+SELECT id, discord_id, username, display_name, avatar_hash, is_admin, created_at, last_login_at, deleted_at FROM users
+WHERE deleted_at IS NULL AND (username = ?1 OR discord_id = ?1)
+ORDER BY id
+`
+
+// Members who haven't left, by username or Discord ID, for removing one.
+// Usernames aren't unique, so this can find more than one.
+func (q *Queries) FindCurrentUsers(ctx context.Context, who string) ([]User, error) {
+	rows, err := q.db.QueryContext(ctx, findCurrentUsers, who)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.DiscordID,
+			&i.Username,
+			&i.DisplayName,
+			&i.AvatarHash,
+			&i.IsAdmin,
+			&i.CreatedAt,
+			&i.LastLoginAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFriendSpare = `-- name: GetFriendSpare :one
+SELECT parts.id, parts.owner_id, parts.slot_id, parts.status, parts.name, parts.category, parts.manufacturer, parts.model, parts.serial_number, parts.price_cents, parts.currency, parts.purchased_on, parts.purchased_from, parts.warranty_expires, parts.product_url, parts.guide_url, parts.notes, parts.created_at, parts.updated_at, parts.source_url, parts.price_checked_at, parts.previous_price_cents, parts.missing_from_source_at, parts.lendable, users.username AS owner_name
+FROM parts
+JOIN users ON users.id = parts.owner_id
+WHERE parts.id = ?1
+  AND parts.owner_id <> ?2 AND users.deleted_at IS NULL
+  AND parts.status = 'owned' AND parts.lendable AND parts.slot_id IS NULL
+`
+
+type GetFriendSpareParams struct {
+	ID     int64
+	UserID int64
+}
+
+type GetFriendSpareRow struct {
+	Part      Part
+	OwnerName string
+}
+
+// One of the spares ListFriendSpares lists, for borrowing it.
+func (q *Queries) GetFriendSpare(ctx context.Context, arg GetFriendSpareParams) (GetFriendSpareRow, error) {
+	row := q.db.QueryRowContext(ctx, getFriendSpare, arg.ID, arg.UserID)
+	var i GetFriendSpareRow
+	err := row.Scan(
+		&i.Part.ID,
+		&i.Part.OwnerID,
+		&i.Part.SlotID,
+		&i.Part.Status,
+		&i.Part.Name,
+		&i.Part.Category,
+		&i.Part.Manufacturer,
+		&i.Part.Model,
+		&i.Part.SerialNumber,
+		&i.Part.PriceCents,
+		&i.Part.Currency,
+		&i.Part.PurchasedOn,
+		&i.Part.PurchasedFrom,
+		&i.Part.WarrantyExpires,
+		&i.Part.ProductUrl,
+		&i.Part.GuideUrl,
+		&i.Part.Notes,
+		&i.Part.CreatedAt,
+		&i.Part.UpdatedAt,
+		&i.Part.SourceUrl,
+		&i.Part.PriceCheckedAt,
+		&i.Part.PreviousPriceCents,
+		&i.Part.MissingFromSourceAt,
+		&i.Part.Lendable,
+		&i.OwnerName,
+	)
+	return i, err
 }
 
 const getMachine = `-- name: GetMachine :one
@@ -1453,20 +1561,23 @@ func (q *Queries) SoftDeleteUser(ctx context.Context, id int64) (int64, error) {
 const unassignPart = `-- name: UnassignPart :execrows
 UPDATE parts SET slot_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE parts.id = ?1
-  AND (parts.owner_id = ?2 OR parts.slot_id IN (
+  AND (parts.slot_id = ?2 OR ?2 IS NULL)
+  AND (parts.owner_id = ?3 OR parts.slot_id IN (
     SELECT s.id FROM machine_slots s JOIN machines m ON m.id = s.machine_id
-    WHERE m.owner_id = ?2
+    WHERE m.owner_id = ?3
   ))
 `
 
 type UnassignPartParams struct {
 	PartID int64
+	SlotID sql.NullInt64
 	UserID int64
 }
 
-// Either the part's owner or the owner of the machine it sits in.
+// Either the part's owner or the owner of the machine it sits in. With a
+// slot_id, only while the part is still in that slot.
 func (q *Queries) UnassignPart(ctx context.Context, arg UnassignPartParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, unassignPart, arg.PartID, arg.UserID)
+	result, err := q.db.ExecContext(ctx, unassignPart, arg.PartID, arg.SlotID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}

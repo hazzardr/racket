@@ -23,8 +23,8 @@ func TestHeaderShowsSignInState(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	w.Render(rr, http.StatusOK, "landing.html", Page{})
-	if body := rr.Body.String(); !strings.Contains(body, `href="/login"`) || strings.Contains(body, "Log out") {
+	w.Render(rr, http.StatusOK, "landing.html", Page{SignIn: SignIn{Discord: true}})
+	if body := rr.Body.String(); !strings.Contains(body, `href="/auth/discord"`) || strings.Contains(body, "Log out") {
 		t.Errorf("signed-out header should offer login only:\n%s", body)
 	}
 

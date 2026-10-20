@@ -7,22 +7,21 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"mime/multipart"
 	"net/http"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"racket/internal/db"
 )
 
-// priceRe strips everything but digits and the decimal point from a price.
-var priceRe = regexp.MustCompile(`[^\d.]`)
-
 // maxImportBody bounds the import request body (form fields + CSV upload).
 const maxImportBody = 10 << 20
+
+// maxImportRows bounds the parts one import creates, all in one transaction.
+const maxImportRows = 500
 
 // importPage is the import form state (also used for failure re-renders).
 type importPage struct {
@@ -87,7 +86,7 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 	machineName := strings.TrimSpace(r.FormValue("machine_name"))
 	text := strings.TrimSpace(r.FormValue("pcpartpicker_text"))
 	var file multipart.File
-	if f, _, err := r.FormFile("file"); err == nil {
+	if f, _, fileErr := r.FormFile("file"); fileErr == nil {
 		file = f
 		defer f.Close()
 	}
@@ -97,6 +96,9 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, source, msg := importRows(text, file)
+	if msg == "" {
+		msg = tooLong(textField{"Machine name", machineName, maxNameLen})
+	}
 	if msg != "" {
 		h.renderImportError(w, r, machineName, text, msg)
 		return
@@ -161,7 +163,9 @@ func (h *Handler) findOrCreateMachine(ctx context.Context, q *db.Queries, ownerI
 	if err != nil {
 		return 0, fmt.Errorf("create machine %q: %w", name, err)
 	}
-	h.seedDefaultSlots(ctx, q, machine.ID)
+	if err := seedDefaultSlots(ctx, q, ownerID, machine.ID); err != nil {
+		return 0, err
+	}
 	return machine.ID, nil
 }
 
@@ -171,7 +175,7 @@ func (h *Handler) findOrCreateMachine(ctx context.Context, q *db.Queries, ownerI
 func importParts(
 	ctx context.Context, q *db.Queries, ownerID, machineID int64, status string, source priceSource, rows []csvRow,
 ) error {
-	// Free slot IDs by lowercased category, in slot order.
+	// Free slot IDs by matchKey of their category, in slot order.
 	free := map[string][]int64{}
 	if machineID != 0 {
 		slots, err := q.ListSlotsByMachine(ctx, machineID)
@@ -180,7 +184,7 @@ func importParts(
 		}
 		for _, s := range slots {
 			if !s.PartID.Valid {
-				key := strings.ToLower(s.Category)
+				key := matchKey(s.Category)
 				free[key] = append(free[key], s.ID)
 			}
 		}
@@ -190,12 +194,14 @@ func importParts(
 		var slotID sql.NullInt64
 		if machineID != 0 {
 			category := slotCategory(row.category)
-			key := strings.ToLower(category)
+			key := matchKey(category)
 			if ids := free[key]; len(ids) > 0 {
 				slotID = sql.NullInt64{Int64: ids[0], Valid: true}
 				free[key] = ids[1:]
 			} else {
-				slot, err := q.CreateSlot(ctx, db.CreateSlotParams{MachineID: machineID, Category: category})
+				slot, err := q.CreateSlot(ctx, db.CreateSlotParams{
+					MachineID: machineID, Category: category, UserID: ownerID,
+				})
 				if err != nil {
 					return fmt.Errorf("create %s slot: %w", category, err)
 				}
@@ -214,7 +220,7 @@ func slotCategory(partType string) string {
 	if partType == "" {
 		return otherSlot
 	}
-	if c, ok := pcppSlotCategories[strings.ToLower(partType)]; ok {
+	if c, ok := pcppSlotCategories[matchKey(partType)]; ok {
 		return c
 	}
 	return partType
@@ -222,8 +228,30 @@ func slotCategory(partType string) string {
 
 // importRows reads the parts to import from a pasted list or a CSV file
 // (nil if none was uploaded). It returns a user-facing message instead when
-// there's nothing to import.
+// there's nothing to import, or more than it takes.
 func importRows(text string, file multipart.File) ([]csvRow, priceSource, string) {
+	rows, source, msg := readImportRows(text, file)
+	if msg != "" {
+		return nil, priceSource{}, msg
+	}
+	if len(rows) > maxImportRows {
+		return nil, priceSource{}, fmt.Sprintf("That's more than %d parts. Import at most %d at a time.",
+			maxImportRows, maxImportRows)
+	}
+	for _, row := range rows {
+		if msg := tooLong(
+			textField{"Part names", row.name, maxPartNameLen},
+			textField{"Part types", row.category, maxCategoryLen},
+			textField{"Merchants", row.merchant, maxPartFieldLen},
+		); msg != "" {
+			return nil, priceSource{}, msg
+		}
+	}
+	return rows, source, ""
+}
+
+// readImportRows is importRows without the limits.
+func readImportRows(text string, file multipart.File) ([]csvRow, priceSource, string) {
 	switch {
 	case text == "" && file == nil:
 		return nil, priceSource{}, "Paste a PCPartPicker list or upload a CSV file."
@@ -265,88 +293,102 @@ func (h *Handler) renderImportError(w http.ResponseWriter, r *http.Request, mach
 	h.render(w, r, http.StatusBadRequest, "import.html", page)
 }
 
-// parsePrice strips currency symbols and commas, then parses a float.
-// Returns 0 and false if the string is empty or unparseable.
-func parsePrice(s string) (float64, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0, false
-	}
-	s = priceRe.ReplaceAllString(s, "")
-	if s == "" || s == "." {
-		return 0, false
-	}
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, false
-	}
-	return v, true
-}
-
 // csvRow holds the parsed fields from a PCPartPicker-style CSV row.
 type csvRow struct {
 	category string
 	name     string
-	price    float64
+	cents    int64
 	hasPrice bool
 	merchant string
 }
 
 // parseCSVToRows parses a PCPartPicker-style CSV reader into structured rows.
-// Expected columns: Type, Item/Name, Price, Merchant.
+// Expected columns: Type, Item/Name, Price, Merchant. Rows may be short or
+// long; a missing cell is empty. It stops reading after maxImportRows+1
+// parts, enough for importRows to say there are too many. A price that
+// isn't one is left out.
 func parseCSVToRows(r *csv.Reader) ([]csvRow, error) {
-	records, err := r.ReadAll()
+	r.FieldsPerRecord = -1
+	header, err := r.Read()
+	if errors.Is(err, io.EOF) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, fmt.Errorf("parse CSV: %w", err)
 	}
-	if len(records) < 2 {
-		return nil, nil
-	}
 
-	// Map header indices (case-insensitive).
-	header := records[0]
-	idx := map[string]int{}
-	for i, col := range header {
-		idx[strings.ToLower(strings.TrimSpace(col))] = i
+	cols, err := newCSVColumns(header)
+	if err != nil {
+		return nil, err
 	}
-
-	nameIdx, hasName := idx["item"]
-	if !hasName {
-		nameIdx, hasName = idx["name"]
-	}
-	if !hasName {
-		return nil, errors.New("CSV missing Item/Name column")
-	}
-
-	typeIdx, hasType := idx["type"]
-	priceIdx, hasPrice := idx["price"]
-	merchantIdx, hasMerchant := idx["merchant"]
 
 	var rows []csvRow
-	for _, rec := range records[1:] {
-		if nameIdx >= len(rec) {
-			continue
+	for len(rows) <= maxImportRows {
+		rec, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			break
 		}
-		name := strings.TrimSpace(rec[nameIdx])
-		if name == "" {
-			continue
+		if err != nil {
+			return nil, fmt.Errorf("parse CSV: %w", err)
 		}
-
-		row := csvRow{name: name}
-
-		if hasType && typeIdx < len(rec) {
-			row.category = strings.TrimSpace(rec[typeIdx])
+		if row := cols.row(rec); row.name != "" {
+			rows = append(rows, row)
 		}
-		if hasPrice && priceIdx < len(rec) {
-			row.price, row.hasPrice = parsePrice(rec[priceIdx])
-		}
-		if hasMerchant && merchantIdx < len(rec) {
-			row.merchant = strings.TrimSpace(rec[merchantIdx])
-		}
-
-		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+// csvColumns are the indexes of a CSV's columns, -1 for one it doesn't
+// have.
+type csvColumns struct {
+	name, category, price, merchant int
+}
+
+// newCSVColumns finds the columns in a CSV's header, ignoring case. A
+// spreadsheet app's byte order mark doesn't hide the first one.
+func newCSVColumns(header []string) (csvColumns, error) {
+	idx := map[string]int{}
+	for i, col := range header {
+		if i == 0 {
+			col = strings.TrimPrefix(col, "\ufeff")
+		}
+		idx[strings.ToLower(strings.TrimSpace(col))] = i
+	}
+	find := func(names ...string) int {
+		for _, name := range names {
+			if i, ok := idx[name]; ok {
+				return i
+			}
+		}
+		return -1
+	}
+	cols := csvColumns{
+		name: find("item", "name"), category: find("type"), price: find("price"), merchant: find("merchant"),
+	}
+	if cols.name < 0 {
+		return csvColumns{}, errors.New("CSV missing Item/Name column")
+	}
+	return cols, nil
+}
+
+// row reads a record, which may be short. A row with no name is the zero
+// csvRow.
+func (c csvColumns) row(rec []string) csvRow {
+	cell := func(i int) string {
+		if i < 0 || i >= len(rec) {
+			return ""
+		}
+		return strings.TrimSpace(rec[i])
+	}
+	row := csvRow{name: cell(c.name)}
+	if row.name == "" {
+		return csvRow{}
+	}
+	row.category, row.merchant = cell(c.category), cell(c.merchant)
+	if price := cell(c.price); price != "" {
+		row.cents, row.hasPrice = parsePrice(price)
+	}
+	return row
 }
 
 // priceSource is where an import's prices came from: a PCPartPicker list
@@ -371,7 +413,7 @@ func rowToCreateParams(
 		p.Category = sql.NullString{String: r.category, Valid: true}
 	}
 	if r.hasPrice {
-		p.PriceCents = sql.NullInt64{Int64: toCents(r.price), Valid: true}
+		p.PriceCents = sql.NullInt64{Int64: r.cents, Valid: true}
 	}
 	if r.merchant != "" {
 		p.PurchasedFrom = sql.NullString{String: r.merchant, Valid: true}
