@@ -28,6 +28,7 @@ linters:
     - gomoddirectives
     - goprintffuncname
     - gosec
+    - govet
     - iface
     - ineffassign
     - intrange
@@ -81,17 +82,6 @@ linters:
               desc: Use github.com/gofrs/uuid/v5 or later, it was not a go module before v5
     errcheck:
       check-type-assertions: true
-    exhaustruct:
-      exclude:
-        - ^net/http.Client$
-        - ^net/http.Cookie$
-        - ^net/http.Request$
-        - ^net/http.Response$
-        - ^net/http.Server$
-        - ^net/http.Transport$
-        - ^net/url.URL$
-        - ^os/exec.Cmd$
-        - ^reflect.StructField$
     funlen:
       lines: 100
       statements: 50
@@ -111,24 +101,10 @@ linters:
         - fieldalignment
       enable-all: true
       settings:
+        # Non-strict: flags a shadowed variable only when the outer one is
+        # used after, not every `if err := f(); err != nil`.
         shadow:
-          strict: true
-    inamedparam:
-      skip-single-param: true
-    mnd:
-      ignored-functions:
-        - args.Error
-        - flag.Arg
-        - flag.Duration.*
-        - flag.Float.*
-        - flag.Int.*
-        - flag.Uint.*
-        - os.Chmod
-        - os.Mkdir.*
-        - os.OpenFile
-        - os.WriteFile
-        - prometheus.ExponentialBuckets.*
-        - prometheus.LinearBuckets
+          strict: false
     nakedret:
       max-func-lines: 0
     nolintlint:
@@ -143,14 +119,6 @@ linters:
     reassign:
       patterns:
         - .*
-    recvcheck:
-      exclusions:
-        - '*.View'
-        - '*.Init'
-        - '*.Update'
-    rowserrcheck:
-      packages:
-        - github.com/jmoiron/sqlx
     sloglint:
       context: scope
   exclusions:
@@ -175,7 +143,6 @@ linters:
           - goconst
           - gosec
           - noctx
-          - wrapcheck
           - nestif
           - gocognit
         path: _test\.go
