@@ -1,25 +1,39 @@
 name: CI
 
+# The one full check run, on the PR. Branch protection on main requires it,
+# blocks outdated PRs and merges fast-forward only, so the commit that lands
+# on main (and later gets tagged) is the exact commit this run tested.
+# release.yml checks this run's status instead of testing again.
 on:
-    push:
+    pull_request:
         branches:
             - main
-        tags:
-            - "*"
-    pull_request:
+    workflow_dispatch:
 
 jobs:
-    build-and-lint:
-        name: Build and lint
+    check:
+        name: Check
         runs-on: docker
+        # Built on devops (brian/hosted, roles/forgejo/files/go-ci-image): node
+        # for the JS actions plus Go, so there's no setup-go download. Keep its
+        # Go minor in step with mise.toml.
+        container:
+            image: localhost/brihome-go-ci:1.27
         steps:
             - name: Checkout
               uses: https://github.com/actions/checkout@v4
 
-            - name: Set up Go
-              uses: https://github.com/actions/setup-go@v5
+            # Module and build caches, at the image's paths. The key changes
+            # only with go.sum, so code changes rebuild just this repo's
+            # packages.
+            - name: Cache Go modules and build output
+              uses: https://github.com/actions/cache@v4
               with:
-                  go-version-file: go.mod
+                  path: |
+                      /go/pkg/mod
+                      /root/.cache/go-build
+                  key: go-1.27-${{ hashFiles('go.sum') }}
+                  restore-keys: go-1.27-
 
             - name: Build and test
               run: |
@@ -42,36 +56,16 @@ jobs:
             - name: Check GoReleaser config
               uses: https://github.com/goreleaser/goreleaser-action@v7
               with:
+                  # Keep in step with goreleaser in mise.toml and release.yml.
                   version: "v2.6.1"
                   args: check
 
             - name: Run golangci-lint
               uses: https://github.com/golangci/golangci-lint-action@v7
               with:
-                  version: v2.12.2
+                  # Keep in step with golangci-lint in mise.toml.
+                  version: v2.15.0
                   install-mode: binary
 
-    release:
-        name: Release
-        runs-on: docker
-        needs: build-and-lint
-        if: startsWith(github.ref, 'refs/tags/')
-        steps:
-            - name: Checkout
-              uses: https://github.com/actions/checkout@v4
-              with:
-                  fetch-depth: 0
-
-            - name: Set up Go
-              uses: https://github.com/actions/setup-go@v5
-              with:
-                  go-version-file: go.mod
-
-            - name: Run GoReleaser
-              uses: https://github.com/goreleaser/goreleaser-action@v7
-              with:
-                  # Keep in step with goreleaser in mise.toml.
-                  version: "v2.6.1"
-                  args: release --clean
-              env:
-                  GITEA_TOKEN: ${{ secrets.goreleaser_token }}
+            - name: Run govulncheck
+              run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

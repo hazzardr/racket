@@ -1,0 +1,30 @@
+name: Security
+
+# PRs run govulncheck in ci.yml and releases in release.yml. This nightly run
+# catches new advisories against main between changes.
+on:
+    schedule:
+        - cron: "0 2 * * *"
+    workflow_dispatch:
+
+jobs:
+    govulncheck:
+        name: Go Vulnerability Check
+        runs-on: docker
+        container:
+            image: localhost/brihome-go-ci:1.27
+        steps:
+            - name: Checkout
+              uses: https://github.com/actions/checkout@v4
+
+            - name: Cache Go modules and build output
+              uses: https://github.com/actions/cache@v4
+              with:
+                  path: |
+                      /go/pkg/mod
+                      /root/.cache/go-build
+                  key: go-1.27-${{ hashFiles('go.sum') }}
+                  restore-keys: go-1.27-
+
+            - name: Run govulncheck
+              run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

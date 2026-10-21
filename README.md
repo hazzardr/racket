@@ -87,8 +87,17 @@ migrations/         goose migration files
 
 - The source repository is <https://code.brihome.me/brian/racket> on Forgejo.
 - A push mirror on Codeberg gives the project public access.
-- CI runs on Forgejo Actions (`.forgejo/workflows/`).
-- GoReleaser publishes releases to Forgejo.
+- CI runs on Forgejo Actions (`.forgejo/workflows/`), once per change: on the
+  PR. `ci.yml` builds, tests, checks the sqlc code and GoReleaser config, lints
+  and runs govulncheck in the `localhost/brihome-go-ci:1.27` job image (built
+  on devops by `brian/hosted`).
+- `main` is protected: the CI check must pass, an outdated PR can't merge, and
+  merges are fast-forward only. So main's head is always a commit that passed
+  CI, and nothing re-runs on the merge.
+- Pushing a `v*` tag runs `release.yml`. It checks that the tagged commit has a
+  green CI status (so tag from main), re-runs govulncheck, then GoReleaser
+  publishes the release to Forgejo.
+- `security.yml` runs govulncheck against main nightly.
 
 ## Deploying
 

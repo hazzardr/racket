@@ -71,8 +71,14 @@ Run `mise tasks` to list all tasks.
 
 ## CI and Releases
 
-- CI runs on the local Forgejo instance (`code.brihome.me`) via `.forgejo/workflows/`.
-- GoReleaser publishes releases to the local Forgejo instance.
+- CI runs on the local Forgejo instance (`code.brihome.me`) via `.forgejo/workflows/`:
+  `ci.yml` is the one full check, on PRs only; `release.yml` (tag `v*`) checks
+  the tagged commit's CI status, re-runs govulncheck and runs GoReleaser;
+  `security.yml` is a nightly govulncheck. Tag only commits on main.
+- Jobs run in `localhost/brihome-go-ci:1.27`, which has `GOTOOLCHAIN=local`:
+  keep `go` in `mise.toml` on the image's Go minor, and golangci-lint on a
+  release built with that Go (older builds can't read newer standard-library
+  export data).
 - The README's "Deploying" section is the deploy contract that the `hosted`
   repo's Ansible relies on: release asset names, environment variables, the
   listen address, `/healthz`, the data path, and migrations. Update it in the
