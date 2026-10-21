@@ -28,8 +28,6 @@ const (
 )
 
 // machineKinds and machineStatuses mirror the CHECK constraints on machines.
-//
-//nolint:goconst // enumerations of the schema's values; tests reuse the literals
 var (
 	machineKinds    = []string{"desktop", "server", "nas", "network", "laptop", "other"}
 	machineStatuses = []string{"planned", machineActive, "retired"}

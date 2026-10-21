@@ -175,37 +175,20 @@ func (h *Handler) findOrCreateMachine(ctx context.Context, q *db.Queries, ownerI
 func importParts(
 	ctx context.Context, q *db.Queries, ownerID, machineID int64, status string, source priceSource, rows []csvRow,
 ) error {
-	// Free slot IDs by matchKey of their category, in slot order.
-	free := map[string][]int64{}
+	var slots *slotPicker
 	if machineID != 0 {
-		slots, err := q.ListSlotsByMachine(ctx, machineID)
-		if err != nil {
-			return fmt.Errorf("list slots: %w", err)
-		}
-		for _, s := range slots {
-			if !s.PartID.Valid {
-				key := matchKey(s.Category)
-				free[key] = append(free[key], s.ID)
-			}
+		var err error
+		if slots, err = newSlotPicker(ctx, q, ownerID, machineID); err != nil {
+			return err
 		}
 	}
 
 	for _, row := range rows {
 		var slotID sql.NullInt64
-		if machineID != 0 {
-			category := slotCategory(row.category)
-			key := matchKey(category)
-			if ids := free[key]; len(ids) > 0 {
-				slotID = sql.NullInt64{Int64: ids[0], Valid: true}
-				free[key] = ids[1:]
-			} else {
-				slot, err := q.CreateSlot(ctx, db.CreateSlotParams{
-					MachineID: machineID, Category: category, UserID: ownerID,
-				})
-				if err != nil {
-					return fmt.Errorf("create %s slot: %w", category, err)
-				}
-				slotID = sql.NullInt64{Int64: slot.ID, Valid: true}
+		if slots != nil {
+			var err error
+			if slotID, err = slots.next(ctx, slotCategory(row.category)); err != nil {
+				return err
 			}
 		}
 		if _, err := q.CreatePart(ctx, rowToCreateParams(row, ownerID, slotID, status, source)); err != nil {
@@ -213,6 +196,46 @@ func importParts(
 		}
 	}
 	return nil
+}
+
+// slotPicker hands out a machine's empty slots by category during an
+// import, creating a new slot when none of the category is left.
+type slotPicker struct {
+	q                  *db.Queries
+	ownerID, machineID int64
+	// Free slot IDs by matchKey of their category, in slot order.
+	free map[string][]int64
+}
+
+func newSlotPicker(ctx context.Context, q *db.Queries, ownerID, machineID int64) (*slotPicker, error) {
+	slots, err := q.ListSlotsByMachine(ctx, machineID)
+	if err != nil {
+		return nil, fmt.Errorf("list slots: %w", err)
+	}
+	p := &slotPicker{q: q, ownerID: ownerID, machineID: machineID, free: map[string][]int64{}}
+	for _, s := range slots {
+		if !s.PartID.Valid {
+			key := matchKey(s.Category)
+			p.free[key] = append(p.free[key], s.ID)
+		}
+	}
+	return p, nil
+}
+
+// next returns the first free slot of the category, or a new one.
+func (p *slotPicker) next(ctx context.Context, category string) (sql.NullInt64, error) {
+	key := matchKey(category)
+	if ids := p.free[key]; len(ids) > 0 {
+		p.free[key] = ids[1:]
+		return sql.NullInt64{Int64: ids[0], Valid: true}, nil
+	}
+	slot, err := p.q.CreateSlot(ctx, db.CreateSlotParams{
+		MachineID: p.machineID, Category: category, UserID: p.ownerID,
+	})
+	if err != nil {
+		return sql.NullInt64{}, fmt.Errorf("create %s slot: %w", category, err)
+	}
+	return sql.NullInt64{Int64: slot.ID, Valid: true}, nil
 }
 
 // slotCategory maps a PCPartPicker part type to a slot category.
